@@ -73,9 +73,33 @@ const server = http.createServer(async (req, res) => {
         name: searchName,
         name_Mod: 'contains',
         status: status,
-        fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Proof URL,DE:Project Type',
+        fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Proof URL,DE:Project Type,tasks:name,tasks:plannedCompletionDate',
         '$$LIMIT': '200'
       });
+
+      // Extract review dates from tasks and add to project level
+      if (result.data) {
+        result.data.forEach(proj => {
+          const tasks = proj.tasks || [];
+          tasks.forEach(t => {
+            const name = (t.name || '').toLowerCase();
+            if (name.includes('r1 - creative review') || name.includes('r1 - proof due for creative')) {
+              if (name.includes('proof due')) proj.proofDueCreativeReview = t.plannedCompletionDate;
+              else proj.creativeReviewDate = t.plannedCompletionDate;
+            }
+            if (name.includes('r2 - marketing review') || name.includes('r2 - proof due for marketing')) {
+              if (name.includes('proof due')) proj.proofDueMarketingReview = t.plannedCompletionDate;
+              else proj.marketingReviewDate = t.plannedCompletionDate;
+            }
+            if (name.includes('r3 - exec') || name.includes('r3 - proof due for exec')) {
+              if (name.includes('proof due')) proj.proofDueExecReview = t.plannedCompletionDate;
+              else proj.execReviewDate = t.plannedCompletionDate;
+            }
+          });
+          // Clean up - remove full task list to keep response smaller
+          delete proj.tasks;
+        });
+      }
 
       res.writeHead(200);
       res.end(JSON.stringify(result, null, 2));
