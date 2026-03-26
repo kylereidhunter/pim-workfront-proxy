@@ -420,29 +420,37 @@ module.exports = async (req, res) => {
         });
       }
 
-      // Find next week's dates
+      // Find next week's dates (Sunday through Saturday to catch all review days)
       const now = new Date();
-      const nextMonday = new Date(now);
-      nextMonday.setDate(now.getDate() + (8 - now.getDay()) % 7);
-      if (nextMonday <= now) nextMonday.setDate(nextMonday.getDate() + 7);
-      const nextFriday = new Date(nextMonday);
-      nextFriday.setDate(nextMonday.getDate() + 4);
+      const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ...
+      const daysUntilNextSunday = 7 - dayOfWeek;
+      const nextSunday = new Date(now);
+      nextSunday.setDate(now.getDate() + daysUntilNextSunday);
+      nextSunday.setHours(0, 0, 0, 0);
+      const nextSaturday = new Date(nextSunday);
+      nextSaturday.setDate(nextSunday.getDate() + 6);
+      nextSaturday.setHours(23, 59, 59, 999);
+      const nextMonday = new Date(nextSunday);
+      nextMonday.setDate(nextSunday.getDate() + 1);
+      const nextFriday = new Date(nextSunday);
+      nextFriday.setDate(nextSunday.getDate() + 5);
+      nextFriday.setHours(23, 59, 59, 999);
 
       // Group by review type for next week
       const crProjects = projects.filter(p => {
         if (!p.creativeReview) return false;
         const d = new Date(p.creativeReview);
-        return d >= nextMonday && d <= nextFriday;
+        return d >= nextSunday && d <= nextSaturday;
       });
       const mktProjects = projects.filter(p => {
         if (!p.marketingReview) return false;
         const d = new Date(p.marketingReview);
-        return d >= nextMonday && d <= nextFriday;
+        return d >= nextSunday && d <= nextSaturday;
       });
       const execProjects = projects.filter(p => {
         if (!p.execReview) return false;
         const d = new Date(p.execReview);
-        return d >= nextMonday && d <= nextFriday;
+        return d >= nextSunday && d <= nextSaturday;
       });
 
       // Format dates
