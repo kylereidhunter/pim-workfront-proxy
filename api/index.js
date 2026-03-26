@@ -464,15 +464,26 @@ module.exports = async (req, res) => {
         return `${dt.getMonth()+1}/${dt.getDate()}`;
       };
 
-      // Build the message
+      // Build the message with Pim's personality
       const openers = [
-        "Happy Friday, team! Time to peek at what's cooking for next week!",
-        "TGIF, creative crew! Here's your weekly dose of what's ahead!",
-        "Friday vibes activated! Let's see what next week has in store!",
-        "Rise and shine, it's digest time! Here's the rundown for next week!",
-        "Another week, another batch of amazing emails to review!"
+        "Happy Friday, team! ☀️ Your girl Pim has been crunching the numbers and here's what's on deck for next week!",
+        "TGIF, creative crew! 🎨 Pim here with your weekly cheat sheet — let's make next week a masterpiece!",
+        "Friday vibes activated! 🎉 Time for your favorite part of the week — Pim's email rundown!",
+        "Rise and grind, beautiful people! ☕ Pim's got your next week all mapped out. Let's goooo!",
+        "Another week, another batch of amazing emails! 💌 Your friendly neighborhood Pim is here with the scoop!",
+        "Hey hey hey! 👋 It's Pim o'clock — which means it's time to peek at what's cooking for next week!",
+        "Pop quiz: what's better than Friday? Friday with Pim's weekly digest! 📋 Here's the lineup!",
+        "Gooood morning, rockstars! 🌟 Pim just pulled the latest from Workfront — here's what next week looks like!"
+      ];
+      const closers = [
+        "That's the rundown! You've got this, team. Have an amazing weekend! 🙌 — Pim",
+        "And that's a wrap! Go crush it. See you Monday! 💪 — Pim",
+        "Questions? You know where to find me. Happy weekend, legends! ✨ — Pim",
+        "That's all for now! Remember, proofs wait for no one. Have a great weekend! 🏖️ — Pim",
+        "Boom. Done. Go enjoy your Friday — you've earned it! 🎊 — Pim"
       ];
       const opener = openers[Math.floor(Math.random() * openers.length)];
+      const closer = closers[Math.floor(Math.random() * closers.length)];
 
       let message = `${opener}\n\nHii team- here are the email priorities for next week:\n\n`;
 
@@ -519,9 +530,11 @@ module.exports = async (req, res) => {
           message += `* ${shortName} - **${p.designer}** / ${p.copywriter}\n`;
         });
         message += '\n';
+      } else {
+        message += `*No EXEC Review next week*\n\n`;
       }
 
-      message += '**Additional Edits/Updates:**\n';
+      message += closer;
 
       return res.status(200).json({
         message: message,
