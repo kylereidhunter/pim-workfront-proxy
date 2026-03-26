@@ -166,6 +166,142 @@ module.exports = async (req, res) => {
       return res.status(200).json(extractReviewDates(result));
     }
 
+    // POST /upload-proof - Upload a proof to a Workfront project
+    // Expects JSON body: { projectName: "WK15 Patriotic", fileBase64: "...", fileName: "proof.pdf" }
+    else if (path === '/upload-proof' || path === '/upload-proof/') {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Use POST method' });
+      }
+
+      // Parse request body
+      const body = await new Promise((resolve) => {
+        let data = '';
+        req.on('data', chunk => data += chunk);
+        req.on('end', () => {
+          try { resolve(JSON.parse(data)); }
+          catch (e) { resolve({}); }
+        });
+      });
+
+      const { projectName, fileBase64, fileName, createProof } = body;
+
+      if (!projectName || !fileBase64 || !fileName) {
+        return res.status(400).json({ error: 'Required: projectName, fileBase64, fileName' });
+      }
+
+      // Step 1: Find the project
+      const projResult = await callWorkfront('proj/search', {
+        name: projectName,
+        name_Mod: 'contains',
+        status: 'CUR',
+        fields: 'name'
+      });
+
+      if (!projResult.data || projResult.data.length === 0) {
+        return res.status(404).json({ error: `No project found matching "${projectName}"` });
+      }
+
+      const project = projResult.data[0];
+
+      // Step 2: Upload file to Workfront
+      const fileBuffer = Buffer.from(fileBase64, 'base64');
+      const boundary = '----PimUpload' + Date.now();
+
+      const formParts = [
+        `--${boundary}\r\n`,
+        `Content-Disposition: form-data; name="uploadedFile"; filename="${fileName}"\r\n`,
+        `Content-Type: application/octet-stream\r\n\r\n`
+      ];
+      const formEnd = `\r\n--${boundary}--\r\n`;
+
+      const formHeader = Buffer.from(formParts.join(''));
+      const formFooter = Buffer.from(formEnd);
+      const formBody = Buffer.concat([formHeader, fileBuffer, formFooter]);
+
+      const uploadResult = await new Promise((resolve, reject) => {
+        const uploadReq = https.request({
+          hostname: WORKFRONT_HOST,
+          path: `/attask/api/v17.0/upload?apiKey=${API_KEY}`,
+          method: 'POST',
+          headers: {
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': formBody.length,
+            'Accept-Encoding': 'gzip, deflate'
+          }
+        }, (uploadRes) => {
+          const chunks = [];
+          uploadRes.on('data', c => chunks.push(c));
+          uploadRes.on('end', () => {
+            const buf = Buffer.concat(chunks);
+            const enc = uploadRes.headers['content-encoding'];
+            const parse = (s) => { try { resolve(JSON.parse(s)); } catch(e) { resolve({ error: s.substring(0,200) }); } };
+            if (enc === 'gzip') { zlib.gunzip(buf, (e, d) => parse(d ? d.toString() : '')); }
+            else { parse(buf.toString()); }
+          });
+        });
+        uploadReq.on('error', reject);
+        uploadReq.write(formBody);
+        uploadReq.end();
+      });
+
+      if (!uploadResult.data || !uploadResult.data.handle) {
+        return res.status(500).json({ error: 'Upload failed', details: uploadResult });
+      }
+
+      const handle = uploadResult.data.handle;
+
+      // Step 3: Create document record linked to project
+      const docParams = {
+        name: fileName,
+        handle: handle,
+        docObjCode: 'PROJ',
+        objID: project.ID
+      };
+      if (createProof !== false) {
+        docParams.createProof = 'true';
+      }
+
+      const docResult = await callWorkfront('docu', {
+        ...docParams,
+        method: 'POST'
+      });
+
+      // Try alternate POST approach if needed
+      const createDoc = await new Promise((resolve, reject) => {
+        const postData = `apiKey=${API_KEY}&name=${encodeURIComponent(fileName)}&handle=${handle}&docObjCode=PROJ&objID=${project.ID}&createProof=true`;
+        const docReq = https.request({
+          hostname: WORKFRONT_HOST,
+          path: '/attask/api/v17.0/docu',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept-Encoding': 'gzip, deflate'
+          }
+        }, (docRes) => {
+          const chunks = [];
+          docRes.on('data', c => chunks.push(c));
+          docRes.on('end', () => {
+            const buf = Buffer.concat(chunks);
+            const enc = docRes.headers['content-encoding'];
+            const parse = (s) => { try { resolve(JSON.parse(s)); } catch(e) { resolve({ error: s.substring(0,200) }); } };
+            if (enc === 'gzip') { zlib.gunzip(buf, (e, d) => parse(d ? d.toString() : '')); }
+            else { parse(buf.toString()); }
+          });
+        });
+        docReq.on('error', reject);
+        docReq.write(postData);
+        docReq.end();
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `Proof "${fileName}" uploaded to project "${project.name}"`,
+        projectId: project.ID,
+        projectName: project.name,
+        document: createDoc
+      });
+    }
+
     // GET / or /health
     else if (path === '/health' || path === '/') {
       return res.status(200).json({ status: 'ok', message: 'Pim Workfront Proxy is running' });
