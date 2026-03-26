@@ -266,9 +266,52 @@ module.exports = async (req, res) => {
         method: 'POST'
       });
 
-      // Try alternate POST approach if needed
+      // Step 3b: Check if document already exists (for versioning)
+      const existingDocs = await callWorkfront('docu/search', {
+        'project:ID': project.ID,
+        name: fileName,
+        name_Mod: 'contains',
+        fields: 'name,ID',
+        '$$LIMIT': '1'
+      });
+
+      const proofWorkflow = body.workflow || 'Creative Review';
+
+      // Create document (or new version if exists)
       const createDoc = await new Promise((resolve, reject) => {
-        const postData = `apiKey=${API_KEY}&name=${encodeURIComponent(fileName)}&handle=${handle}&docObjCode=PROJ&objID=${project.ID}&createProof=true`;
+        let postData;
+        if (existingDocs.data && existingDocs.data.length > 0) {
+          // Upload as new version of existing document
+          const existingDocId = existingDocs.data[0].ID;
+          postData = `apiKey=${API_KEY}&docID=${existingDocId}&fileName=${encodeURIComponent(fileName)}&handle=${handle}&createProof=true`;
+          // POST to docv (document version) for new version
+          const docvReq = https.request({
+            hostname: WORKFRONT_HOST,
+            path: '/attask/api/v17.0/docv',
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Accept-Encoding': 'gzip, deflate'
+            }
+          }, (docRes) => {
+            const chunks = [];
+            docRes.on('data', c => chunks.push(c));
+            docRes.on('end', () => {
+              const buf = Buffer.concat(chunks);
+              const enc = docRes.headers['content-encoding'];
+              const parse = (s) => { try { resolve({ ...JSON.parse(s), isNewVersion: true }); } catch(e) { resolve({ error: s.substring(0,200) }); } };
+              if (enc === 'gzip') { zlib.gunzip(buf, (e, d) => parse(d ? d.toString() : '')); }
+              else { parse(buf.toString()); }
+            });
+          });
+          docvReq.on('error', reject);
+          docvReq.write(postData);
+          docvReq.end();
+          return;
+        }
+
+        // Create new document
+        postData = `apiKey=${API_KEY}&name=${encodeURIComponent(fileName)}&handle=${handle}&docObjCode=PROJ&objID=${project.ID}&createProof=true`;
         const docReq = https.request({
           hostname: WORKFRONT_HOST,
           path: '/attask/api/v17.0/docu',
@@ -293,11 +336,16 @@ module.exports = async (req, res) => {
         docReq.end();
       });
 
+      const isNewVersion = createDoc.isNewVersion || false;
       return res.status(200).json({
         success: true,
-        message: `Proof "${fileName}" uploaded to project "${project.name}"`,
+        message: isNewVersion
+          ? `New version of "${fileName}" uploaded to project "${project.name}"`
+          : `Proof "${fileName}" uploaded to project "${project.name}"`,
         projectId: project.ID,
         projectName: project.name,
+        isNewVersion: isNewVersion,
+        workflow: body.workflow || 'Creative Review',
         document: createDoc
       });
     }
