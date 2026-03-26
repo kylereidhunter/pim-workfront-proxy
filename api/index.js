@@ -437,20 +437,23 @@ module.exports = async (req, res) => {
       nextFriday.setHours(23, 59, 59, 999);
 
       // Group by review type for next week
+      // Workfront dates use colon before ms (T15:00:00:000) - fix to dot (T15:00:00.000)
+      const parseWFDate = (s) => s ? new Date(s.replace(/(\d{2}):(\d{3})/, '$1.$2')) : null;
+
       const crProjects = projects.filter(p => {
         if (!p.creativeReview) return false;
-        const d = new Date(p.creativeReview);
-        return d >= nextSunday && d <= nextSaturday;
+        const d = parseWFDate(p.creativeReview);
+        return d && d >= nextSunday && d <= nextSaturday;
       });
       const mktProjects = projects.filter(p => {
         if (!p.marketingReview) return false;
-        const d = new Date(p.marketingReview);
-        return d >= nextSunday && d <= nextSaturday;
+        const d = parseWFDate(p.marketingReview);
+        return d && d >= nextSunday && d <= nextSaturday;
       });
       const execProjects = projects.filter(p => {
         if (!p.execReview) return false;
-        const d = new Date(p.execReview);
-        return d >= nextSunday && d <= nextSaturday;
+        const d = parseWFDate(p.execReview);
+        return d && d >= nextSunday && d <= nextSaturday;
       });
 
       // Format dates
