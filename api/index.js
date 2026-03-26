@@ -456,10 +456,11 @@ module.exports = async (req, res) => {
         return d && d >= nextSunday && d <= nextSaturday;
       });
 
-      // Format dates
+      // Format dates (fix Workfront colon-before-ms format)
       const fmt = (d) => {
         if (!d) return '';
-        const dt = new Date(d);
+        const dt = parseWFDate(d);
+        if (!dt || isNaN(dt.getTime())) return '';
         return `${dt.getMonth()+1}/${dt.getDate()}`;
       };
 
