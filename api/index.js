@@ -382,6 +382,146 @@ module.exports = async (req, res) => {
       });
     }
 
+    // GET /weekly-digest - Generate the formatted weekly digest message
+    else if (path === '/weekly-digest' || path === '/weekly-digest/') {
+      const result = await callWorkfront('proj/search', {
+        name: 'FY27',
+        name_Mod: 'contains',
+        status: 'CUR',
+        fields: 'name,status,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Live Date,owner:name,tasks:name,tasks:plannedCompletionDate',
+        '$$LIMIT': '200'
+      });
+
+      // Extract review dates
+      const projects = [];
+      if (result.data) {
+        result.data.forEach(proj => {
+          const tasks = proj.tasks || [];
+          const info = {
+            name: proj.name,
+            designer: proj['DE:Lead Designer'] || 'TBD',
+            copywriter: proj['DE:Lead Copywriter'] || 'TBD',
+            fiscalWeek: proj['DE:Fiscal Weeks'] || '',
+            channel: proj['DE:Channel'] || '',
+            liveDate: proj['DE:Live Date'] || '',
+            pm: proj.owner ? proj.owner.name : 'TBD'
+          };
+          tasks.forEach(t => {
+            const tname = (t.name || '').toLowerCase();
+            if (tname.includes('r1 - creative review') && !tname.includes('proof')) info.creativeReview = t.plannedCompletionDate;
+            if (tname.includes('r2 - marketing review') && !tname.includes('proof')) info.marketingReview = t.plannedCompletionDate;
+            if (tname.includes('r3 - exec') && !tname.includes('proof')) info.execReview = t.plannedCompletionDate;
+            if (tname.includes('r1 - proof due')) info.proofDueCR = t.plannedCompletionDate;
+            if (tname.includes('r2 - proof due')) info.proofDueMKT = t.plannedCompletionDate;
+            if (tname.includes('r3 - proof due')) info.proofDueExec = t.plannedCompletionDate;
+          });
+          // Only include email/SMS/push projects
+          if (info.channel && info.channel.includes('Email')) projects.push(info);
+        });
+      }
+
+      // Find next week's dates
+      const now = new Date();
+      const nextMonday = new Date(now);
+      nextMonday.setDate(now.getDate() + (8 - now.getDay()) % 7);
+      if (nextMonday <= now) nextMonday.setDate(nextMonday.getDate() + 7);
+      const nextFriday = new Date(nextMonday);
+      nextFriday.setDate(nextMonday.getDate() + 4);
+
+      // Group by review type for next week
+      const crProjects = projects.filter(p => {
+        if (!p.creativeReview) return false;
+        const d = new Date(p.creativeReview);
+        return d >= nextMonday && d <= nextFriday;
+      });
+      const mktProjects = projects.filter(p => {
+        if (!p.marketingReview) return false;
+        const d = new Date(p.marketingReview);
+        return d >= nextMonday && d <= nextFriday;
+      });
+      const execProjects = projects.filter(p => {
+        if (!p.execReview) return false;
+        const d = new Date(p.execReview);
+        return d >= nextMonday && d <= nextFriday;
+      });
+
+      // Format dates
+      const fmt = (d) => {
+        if (!d) return '';
+        const dt = new Date(d);
+        return `${dt.getMonth()+1}/${dt.getDate()}`;
+      };
+
+      // Build the message
+      const openers = [
+        "Happy Friday, team! Time to peek at what's cooking for next week!",
+        "TGIF, creative crew! Here's your weekly dose of what's ahead!",
+        "Friday vibes activated! Let's see what next week has in store!",
+        "Rise and shine, it's digest time! Here's the rundown for next week!",
+        "Another week, another batch of amazing emails to review!"
+      ];
+      const opener = openers[Math.floor(Math.random() * openers.length)];
+
+      let message = `${opener}\n\nHii team- here are the email priorities for next week:\n\n`;
+
+      if (crProjects.length > 0) {
+        const crDate = fmt(crProjects[0].creativeReview);
+        const proofDue = crProjects[0].proofDueCR ? fmt(crProjects[0].proofDueCR) : '';
+        message += `**Creative Review ${crDate}**\n`;
+        message += `* Proof links due by 3 PM Monday ${proofDue}\n`;
+        crProjects.forEach(p => {
+          const shortName = p.name.replace('FY27_', '').replace(/_/g, ' ');
+          message += `* ${shortName} - **${p.designer}** / ${p.copywriter}\n`;
+        });
+        message += '\n';
+      }
+
+      if (mktProjects.length > 0) {
+        const mktDate = fmt(mktProjects[0].marketingReview);
+        const proofDue = mktProjects[0].proofDueMKT ? fmt(mktProjects[0].proofDueMKT) : '';
+        message += `**MKT Review ${mktDate}**\n`;
+        message += `* Proof & JPEGs due by 1 PM Tuesday ${proofDue}\n`;
+        const byWeek = {};
+        mktProjects.forEach(p => {
+          const wk = 'WK' + (p.fiscalWeek || '?');
+          if (!byWeek[wk]) byWeek[wk] = [];
+          byWeek[wk].push(p);
+        });
+        Object.entries(byWeek).forEach(([wk, ps]) => {
+          message += `* ${wk}:\n`;
+          ps.forEach(p => {
+            const shortName = p.name.replace('FY27_', '').replace(/_/g, ' ');
+            message += `  * ${shortName} - **${p.designer}** / ${p.copywriter}\n`;
+          });
+        });
+        message += '\n';
+      }
+
+      if (execProjects.length > 0) {
+        const execDate = fmt(execProjects[0].execReview);
+        const proofDue = execProjects[0].proofDueExec ? fmt(execProjects[0].proofDueExec) : '';
+        message += `**EXEC Review ${execDate}**\n`;
+        message += `* Proof & JPEGs due by 1 PM Wednesday ${proofDue}\n`;
+        execProjects.forEach(p => {
+          const shortName = p.name.replace('FY27_', '').replace(/_/g, ' ');
+          message += `* ${shortName} - **${p.designer}** / ${p.copywriter}\n`;
+        });
+        message += '\n';
+      }
+
+      message += '**Additional Edits/Updates:**\n';
+
+      return res.status(200).json({
+        message: message,
+        summary: {
+          creativeReview: crProjects.length,
+          mktReview: mktProjects.length,
+          execReview: execProjects.length,
+          total: crProjects.length + mktProjects.length + execProjects.length
+        }
+      });
+    }
+
     // GET / or /health
     else if (path === '/health' || path === '/') {
       return res.status(200).json({ status: 'ok', message: 'Pim Workfront Proxy is running' });
