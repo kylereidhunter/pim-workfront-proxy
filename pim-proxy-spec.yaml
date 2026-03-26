@@ -1,0 +1,106 @@
+openapi: 3.0.0
+info:
+  title: Pim Workfront Full Access
+  description: Gives Pim full access to search and explore Workfront projects, tasks, and assignments
+  version: "5.0"
+servers:
+  - url: https://pim-workfront-proxy.onrender.com
+paths:
+  /search:
+    get:
+      operationId: searchProjects
+      summary: Search for projects in Workfront by name. Can search for any project by any keyword.
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: Text to search for in project names (e.g. FY27, Patriotic, Patio, Email, ETP)
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          description: Project status - CUR for active, CPL for complete, DED for dead. Default is CUR.
+          schema:
+            type: string
+            default: CUR
+      responses:
+        "200":
+          description: List of matching projects with designer, copywriter, due dates
+          content:
+            application/json:
+              schema:
+                type: object
+  /project/{projectId}:
+    get:
+      operationId: getProjectDetails
+      summary: Get full details for a specific project including all tasks and assignments
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          description: The Workfront project ID
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Full project details
+          content:
+            application/json:
+              schema:
+                type: object
+  /tasks:
+    get:
+      operationId: getProjectTasks
+      summary: Get all tasks for a specific project with assignees and status
+      parameters:
+        - name: projectId
+          in: query
+          required: true
+          description: The Workfront project ID to get tasks for
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of tasks with assignees and completion dates
+          content:
+            application/json:
+              schema:
+                type: object
+  /proofs:
+    get:
+      operationId: getProofStatus
+      summary: Get proof status for projects. Shows which proofs exist, their approval status (pending/approved/rejected), and whether proofs have been uploaded.
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: Project name to search for proofs (e.g. FY27_WK15, Patriotic, WK12)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of documents with proof status and decisions
+          content:
+            application/json:
+              schema:
+                type: object
+  /upcoming-reviews:
+    get:
+      operationId: getUpcomingReviews
+      summary: Get projects with upcoming review dates for the weekly digest
+      parameters:
+        - name: name
+          in: query
+          required: false
+          description: Filter projects by name. Defaults to FY27.
+          schema:
+            type: string
+            default: FY27
+      responses:
+        "200":
+          description: Projects with upcoming creative due dates
+          content:
+            application/json:
+              schema:
+                type: object

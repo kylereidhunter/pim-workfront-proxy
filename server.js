@@ -143,6 +143,35 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(result, null, 2));
     }
 
+    // GET /proofs?name=WK15 - Get proof status for projects matching a name
+    else if (path === '/proofs' || path === '/proofs/') {
+      const searchName = query.name || 'FY27';
+      const result = await callWorkfront('docu/search', {
+        'project:name': searchName,
+        'project:name_Mod': 'contains',
+        'currentVersion:proofID_Mod': 'notnull',
+        fields: 'name,project:name,currentVersion:proofID,currentVersion:proofStatus,currentVersion:proofDecision,currentVersion:proofStatusDate,currentVersion:fileName',
+        '$$LIMIT': '100'
+      });
+
+      // Clean up the response for readability
+      if (result.data) {
+        result.data = result.data.map(doc => ({
+          documentName: doc.name,
+          projectName: doc.project ? doc.project.name : 'N/A',
+          fileName: doc.currentVersion ? doc.currentVersion.fileName : 'N/A',
+          proofID: doc.currentVersion ? doc.currentVersion.proofID : null,
+          proofStatus: doc.currentVersion ? doc.currentVersion.proofStatus : 'no proof',
+          proofDecision: doc.currentVersion ? doc.currentVersion.proofDecision : 'N/A',
+          proofStatusDate: doc.currentVersion ? doc.currentVersion.proofStatusDate : null,
+          hasProof: !!(doc.currentVersion && doc.currentVersion.proofID)
+        }));
+      }
+
+      res.writeHead(200);
+      res.end(JSON.stringify(result, null, 2));
+    }
+
     // GET /my-projects?assignedTo=username - Get projects assigned to a person
     else if (path === '/my-projects' || path === '/my-projects/') {
       const assignee = query.assignee || '';
