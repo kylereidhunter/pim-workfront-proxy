@@ -183,7 +183,37 @@ module.exports = async (req, res) => {
         });
       });
 
-      const { projectName, fileBase64, fileName, createProof } = body;
+      const { projectName, fileBase64, fileName, createProof, workflow } = body;
+
+      // Workflow templates with reviewer IDs
+      const WORKFLOWS = {
+        'Creative Review': {
+          stages: [{
+            name: 'Stage 1',
+            position: 1,
+            activateOn: 1, // on proof creation
+            lockOn: 0, // manually
+            recipients: [
+              { id: '6418bcb8003fe85fc9bf9eb78095ee14', role: 5, alerts: 4 },  // Kyle Hunter - Reviewer, Daily summary
+              { id: '62a21ad6003022c08375916ea6756b8a', role: 6, alerts: 0 },  // Meghan Miller - Reviewer & Approver
+              { id: '6080d3b5001143b2fd695433c963f0c4', role: 5, alerts: 8 },  // Sharon Wernert - Reviewer, Final decision
+              { id: '60c7c956001d7533e9e1ebb9f5416ebd', role: 5, alerts: 0 },  // Ryan Creery - Reviewer
+              { id: '6113f54c0012ff2e549c08be46d55263', role: 5, alerts: 8 },  // Meagan Goldberg - Reviewer, Final decision
+              { id: '61fc2c490015176f176b8253f8b7ee80', role: 5, alerts: 4 },  // Alise Gray - Reviewer, Daily summary
+              { id: '625d8bcc00ec74e8fc654cd882416420', role: 5, alerts: 0 },  // Danielle Maday - Reviewer
+              { id: '676ecd4e00dd0481d77743410018fc37', role: 5, alerts: 0 },  // Peyton Mackay - Reviewer
+              { id: '66954411001d7da52322ed33e756f04d', role: 5, alerts: 0 },  // Amber Mischo - Reviewer
+              { id: '67e435340004215a520ea5cb7bdc4c15', role: 5, alerts: 0 },  // Gracie Chavez - Reviewer
+              { id: '67e1cacb00055186317c9290247e16d0', role: 5, alerts: 0 },  // Traci Pruitt - Reviewer
+              { id: '6080d4d00011a5bf15872c9ad5b7c835', role: 6, alerts: 0 },  // Hannah Bryant - Reviewer & Approver
+              { id: '690d24330005054eaefccdcb745e72ac', role: 5, alerts: 0 },  // Meaghan Stevens - Reviewer
+              { id: '64ee14b0002146bd55a0dbabd636b1a6', role: 10, alerts: 16 }, // Jilly Blythe - Author, Decisions
+            ]
+          }]
+        }
+      };
+
+      const selectedWorkflow = workflow || 'Creative Review';
 
       if (!projectName || !fileBase64 || !fileName) {
         return res.status(400).json({ error: 'Required: projectName, fileBase64, fileName' });
@@ -310,8 +340,10 @@ module.exports = async (req, res) => {
           return;
         }
 
-        // Create new document
-        postData = `apiKey=${API_KEY}&name=${encodeURIComponent(fileName)}&handle=${handle}&docObjCode=PROJ&objID=${project.ID}&createProof=true`;
+        // Create new document with workflow
+        const wf = WORKFLOWS[selectedWorkflow];
+        const advancedOptions = wf ? JSON.stringify(wf) : '';
+        postData = `apiKey=${API_KEY}&name=${encodeURIComponent(fileName)}&handle=${handle}&docObjCode=PROJ&objID=${project.ID}&createProof=true` + (advancedOptions ? `&advancedProofingOptions=${encodeURIComponent(advancedOptions)}` : '');
         const docReq = https.request({
           hostname: WORKFRONT_HOST,
           path: '/attask/api/v17.0/docu',
