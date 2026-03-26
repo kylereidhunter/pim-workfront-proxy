@@ -1,0 +1,12 @@
+{
+  "name": "pim-workfront-proxy",
+  "version": "1.0.0",
+  "description": "Proxy server for Pim to access Workfront API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
