@@ -313,11 +313,11 @@ module.exports = async (req, res) => {
         if (existingDocs.data && existingDocs.data.length > 0) {
           // Upload as new version of existing document
           const existingDocId = existingDocs.data[0].ID;
-          postData = `apiKey=${API_KEY}&docID=${existingDocId}&fileName=${encodeURIComponent(fileName)}&handle=${handle}&createProof=true`;
+          postData = `docID=${existingDocId}&fileName=${encodeURIComponent(fileName)}&handle=${handle}&createProof=true`;
           // POST to docv (document version) for new version
           const docvReq = https.request({
             hostname: WORKFRONT_HOST,
-            path: '/attask/api/v17.0/docv',
+            path: `/attask/api/v17.0/docv?apiKey=${API_KEY}`,
             method: 'POST',
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
@@ -343,10 +343,10 @@ module.exports = async (req, res) => {
         // Create new document with workflow
         const wf = WORKFLOWS[selectedWorkflow];
         const advancedOptions = wf ? JSON.stringify(wf) : '';
-        postData = `apiKey=${API_KEY}&name=${encodeURIComponent(fileName)}&handle=${handle}&docObjCode=PROJ&objID=${project.ID}&createProof=true` + (advancedOptions ? `&advancedProofingOptions=${encodeURIComponent(advancedOptions)}` : '');
+        postData = `name=${encodeURIComponent(fileName)}&handle=${handle}&docObjCode=PROJ&objID=${project.ID}&createProof=true` + (advancedOptions ? `&advancedProofingOptions=${encodeURIComponent(advancedOptions)}` : '');
         const docReq = https.request({
           hostname: WORKFRONT_HOST,
-          path: '/attask/api/v17.0/docu',
+          path: `/attask/api/v17.0/docu?apiKey=${API_KEY}`,
           method: 'POST',
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
