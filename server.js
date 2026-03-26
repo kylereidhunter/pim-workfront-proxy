@@ -73,7 +73,7 @@ const server = http.createServer(async (req, res) => {
         name: searchName,
         name_Mod: 'contains',
         status: status,
-        fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Proof URL,DE:Project Type,tasks:name,tasks:plannedCompletionDate',
+        fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Proof URL,DE:Project Type,owner:name,tasks:name,tasks:plannedCompletionDate',
         '$$LIMIT': '200'
       });
 
@@ -95,7 +95,15 @@ const server = http.createServer(async (req, res) => {
               if (name.includes('proof due')) proj.proofDueExecReview = t.plannedCompletionDate;
               else proj.execReviewDate = t.plannedCompletionDate;
             }
+            if (name.includes('r5 - deliver final files') || name.includes('deliver final')) {
+              proj.deliverDate = t.plannedCompletionDate;
+            }
           });
+          // Add PM name from owner
+          if (proj.owner) {
+            proj.pm = proj.owner.name;
+            delete proj.owner;
+          }
           // Clean up - remove full task list to keep response smaller
           delete proj.tasks;
         });
