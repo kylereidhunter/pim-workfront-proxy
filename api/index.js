@@ -485,7 +485,7 @@ module.exports = async (req, res) => {
       const opener = openers[Math.floor(Math.random() * openers.length)];
       const closer = closers[Math.floor(Math.random() * closers.length)];
 
-      let message = `${opener}\n\nHii team- here are the email priorities for next week:\n\n`;
+      let message = `${opener}\n\n`;
 
       if (crProjects.length > 0) {
         const crDate = fmt(crProjects[0].creativeReview);
