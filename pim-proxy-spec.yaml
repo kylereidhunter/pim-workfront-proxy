@@ -4,7 +4,7 @@ info:
   description: Gives Pim full access to search and explore Workfront projects, tasks, and assignments
   version: "5.0"
 servers:
-  - url: https://pim-workfront-proxy.onrender.com
+  - url: https://pim-workfront-proxy.vercel.app
 paths:
   /search:
     get:

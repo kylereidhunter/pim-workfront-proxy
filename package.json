@@ -1,12 +1,16 @@
 {
   "name": "pim-workfront-proxy",
-  "version": "1.0.0",
-  "description": "Proxy server for Pim to access Workfront API",
-  "main": "server.js",
+  "version": "2.0.0",
+  "description": "Pim - Teams bot + Workfront proxy for At Home Creative",
+  "main": "api/index.js",
   "scripts": {
     "start": "node server.js"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "botbuilder": "^4.22.3",
+    "openai": "^4.77.0"
   }
 }

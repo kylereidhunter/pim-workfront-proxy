@@ -1,0 +1,59 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "331d7882-e0db-41d7-af70-92571209a943",
+  "packageName": "com.athome.creative.pim",
+  "developer": {
+    "name": "At Home Stores Creative Team",
+    "websiteUrl": "https://athome.com",
+    "privacyUrl": "https://athome.com/privacy",
+    "termsOfUseUrl": "https://athome.com/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "Pim",
+    "full": "Pim - Email Marketing PM Assistant"
+  },
+  "description": {
+    "short": "AI project manager for the At Home email marketing creative team.",
+    "full": "Pim is an AI-powered project manager assistant for the At Home email marketing creative team. Ask Pim about FY27 email project review dates, assignments, proof statuses, and upcoming deadlines. Pim pulls live data from Workfront and can post the weekly Friday digest of upcoming review priorities."
+  },
+  "accentColor": "#6264A7",
+  "bots": [
+    {
+      "botId": "331d7882-e0db-41d7-af70-92571209a943",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "team", "groupChat"],
+          "commands": [
+            {
+              "title": "reviews this week",
+              "description": "Show projects in this week's Creative/MKT/Exec reviews"
+            },
+            {
+              "title": "reviews next week",
+              "description": "Show projects in next week's reviews"
+            },
+            {
+              "title": "proof status",
+              "description": "Check proof status for a project or week"
+            },
+            {
+              "title": "what's Meagan working on",
+              "description": "Show projects assigned to a designer or copywriter"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["pim-workfront-proxy.vercel.app"]
+}
