@@ -299,9 +299,15 @@ async function botLogic(context) {
 }
 
 // ---------- Vercel serverless handler ----------
+// NOTE: we intentionally do NOT use `adapter.process(req, res, logic)` here.
+// That method internally validates `req`/`res` against a Zod schema that
+// expects modern Fetch API Request/Response — Vercel gives us Node's
+// IncomingMessage/ServerResponse, which fails that schema with the
+// cryptic `ZodError: Response` we were seeing. Calling `processActivity`
+// directly with the parsed body + auth header bypasses that validation
+// entirely and is the recommended pattern for serverless hosts.
 module.exports = async (req, res) => {
   if (req.method === 'GET' || req.method === 'HEAD') {
-    // Health check so browsers + Azure's endpoint validator both succeed
     if (req.method === 'HEAD') return res.status(200).end();
     return res.status(200).json({ status: 'ok', bot: 'Pim', endpoint: '/api/messages' });
   }
@@ -311,14 +317,33 @@ module.exports = async (req, res) => {
   }
 
   try {
-    await adapter.process(req, res, botLogic);
+    // 1) Get the parsed activity body. Vercel pre-parses JSON; fall back to
+    //    reading the stream if for some reason it didn't.
+    let activity = req.body;
+    if (!activity || typeof activity !== 'object') {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const raw = Buffer.concat(chunks).toString('utf8');
+      activity = raw ? JSON.parse(raw) : {};
+    }
+
+    // 2) Pull the Bot Framework JWT from the Authorization header.
+    const authHeader =
+      req.headers.authorization ||
+      req.headers.Authorization ||
+      '';
+
+    // 3) Hand the activity + auth header to the adapter. This does
+    //    JWT validation, builds a TurnContext, runs our bot logic,
+    //    and batches outbound sendActivity calls back to the Bot
+    //    Connector service behind the scenes.
+    await adapter.processActivity(authHeader, activity, botLogic);
+
+    if (!res.headersSent) res.status(200).end();
   } catch (err) {
-    logErr('adapter.process failed', err);
+    logErr('handler error', err);
     if (!res.headersSent) {
       res.status(500).json({ error: err && err.message ? err.message : 'Bot error' });
     }
   }
 };
-
-// Let Vercel parse JSON into req.body — CloudAdapter.process handles
-// both pre-parsed req.body and raw streams, and pre-parsed is safer on Vercel.
