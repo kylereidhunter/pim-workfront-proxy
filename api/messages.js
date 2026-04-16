@@ -3,12 +3,17 @@
 
 const {
   CloudAdapter,
-  ConfigurationBotFrameworkAuthentication,
   ConfigurationServiceClientCredentialFactory,
+  createBotFrameworkAuthenticationFromConfiguration,
 } = require('botbuilder');
 const OpenAI = require('openai');
 
 // ---------- Bot Framework adapter ----------
+// Microsoft's recommended wiring: build the credentials factory from env vars,
+// then use createBotFrameworkAuthenticationFromConfiguration instead of
+// newing up ConfigurationBotFrameworkAuthentication directly (which requires
+// passing a schema-validated config object — that was the source of our
+// earlier "ZodError: Response").
 const credentialsFactory = new ConfigurationServiceClientCredentialFactory({
   MicrosoftAppId: process.env.MICROSOFT_APP_ID,
   MicrosoftAppPassword: process.env.MICROSOFT_APP_PASSWORD,
@@ -16,8 +21,8 @@ const credentialsFactory = new ConfigurationServiceClientCredentialFactory({
   MicrosoftAppTenantId: process.env.MICROSOFT_APP_TENANT_ID,
 });
 
-const botFrameworkAuthentication = new ConfigurationBotFrameworkAuthentication(
-  {},
+const botFrameworkAuthentication = createBotFrameworkAuthenticationFromConfiguration(
+  null,
   credentialsFactory
 );
 
@@ -31,7 +36,13 @@ function logErr(label, err) {
     name: err && err.name,
     message: err && err.message,
     status: err && (err.statusCode || err.status),
-    stack: err && err.stack && String(err.stack).split('\n').slice(0, 8).join(' | '),
+    code: err && err.code,
+    // Zod errors: issues[] carries the actual validation problems
+    issues: err && err.issues,
+    // Some errors wrap another error
+    causeName: err && err.cause && err.cause.name,
+    causeMessage: err && err.cause && err.cause.message,
+    stack: err && err.stack && String(err.stack).split('\n').slice(0, 10).join(' | '),
   };
   try {
     console.log('[Pim:ERR] ' + JSON.stringify(parts));
@@ -309,9 +320,5 @@ module.exports = async (req, res) => {
   }
 };
 
-// Vercel config: let Bot Framework parse raw body itself
-module.exports.config = {
-  api: {
-    bodyParser: false,
-  },
-};
+// Let Vercel parse JSON into req.body — CloudAdapter.process handles
+// both pre-parsed req.body and raw streams, and pre-parsed is safer on Vercel.
