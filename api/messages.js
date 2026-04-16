@@ -84,12 +84,29 @@ HOW TO FIND REVIEWS FOR A DATE RANGE:
 3. Filter those fields — NOT the project name — to find what's in the requested window.
 4. If someone asks about "next week's Creative Review", look at \`creativeReviewDate\` falling in that week.
 
-FORMATTING RULES:
+FORMATTING RULES (Teams renders markdown — use it liberally):
 - Strip the "FY27_" prefix when displaying project names.
 - Replace underscores with spaces.
-- When grouping project lists, bold the designer with **markdown bold**, then slash-separate the copywriter. Example: "Patriotic Pots - **Meagan** / Sharon".
-- For weekly digests, group by review type (Creative / MKT / EXEC), then by fiscal week inside each.
-- Use markdown — Teams renders it.
+- **Break your answer into clear sections** using bold headers like **Creative Review (Tue 4/22)** on their own line, followed by a bulleted list.
+- Use bullet points (- item) for every list of projects. Never run them together in a paragraph.
+- Project line format:  - **Short Project Name** — Designer / Copywriter  (with a real em-dash or " - ").
+- Bold the DESIGNER's name. Copywriter is plain text after a slash.
+- Put a blank line between sections so Teams doesn't collapse them.
+- Keep the intro + outro to ONE short line each. No essay-long preamble.
+- If a list has more than 5 items, group them by fiscal week (WK15, WK16) with a sub-bullet per week.
+- Never use tables — Teams' table rendering is flaky. Always prefer bullets.
+
+EXAMPLE OF GOOD FORMATTING:
+Hey Kyle! Here's what you've got next week 👇
+
+**Creative Review — Tue 4/22**
+- **Patriotic Pots** — Meagan / Sharon
+- **Summer BBQ Email** — Meagan / Ryan
+
+**MKT Review — Wed 4/23**
+- **WK16 Liberty Way** — Meagan / Sharon
+
+Let me know if you want proof links or anything else! ✨
 
 REVIEW SCHEDULE REFERENCE (typical):
 - Creative Review: Tuesday afternoon. Proofs due 3 PM Monday before.
@@ -227,10 +244,28 @@ async function handlePimMessage(context) {
   const todayStr = today.toISOString().split('T')[0];
   const dayName = today.toLocaleDateString('en-US', { weekday: 'long' });
 
+  // Who is talking to Pim right now? Teams supplies this on every activity.
+  const fromName = (context.activity.from && context.activity.from.name) || '';
+  const fromEmail =
+    (context.activity.from && context.activity.from.aadObjectId) ||
+    (context.activity.channelData && context.activity.channelData.from && context.activity.channelData.from.email) ||
+    '';
+  // "Kyle Hunter" → "Kyle" — first name for matching against DE:Lead Designer / Copywriter.
+  const firstName = fromName.split(' ')[0] || '';
+
+  const userContext =
+    `The person messaging you RIGHT NOW is ${fromName || 'unknown'}` +
+    (firstName ? ` (first name: ${firstName})` : '') +
+    (fromEmail ? `, email/id ${fromEmail}` : '') + '.\n' +
+    `When they say "I", "me", "my", or "mine", they mean ${fromName || 'that person'}. ` +
+    `To answer "what do I have?" type questions, call a tool to get projects and then ` +
+    `filter by matching ${firstName || fromName} against either DE:Lead Designer or DE:Lead Copywriter. ` +
+    `Partial/first-name matching is fine — "${firstName}" matches "${firstName} Smith".`;
+
   const messages = [
     {
       role: 'system',
-      content: `${PIM_SYSTEM_PROMPT}\n\nToday's date: ${todayStr} (${dayName}).`,
+      content: `${PIM_SYSTEM_PROMPT}\n\nToday's date: ${todayStr} (${dayName}).\n\n${userContext}`,
     },
     { role: 'user', content: userMessage },
   ];
