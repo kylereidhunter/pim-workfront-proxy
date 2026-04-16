@@ -23,12 +23,29 @@ const botFrameworkAuthentication = new ConfigurationBotFrameworkAuthentication(
 
 const adapter = new CloudAdapter(botFrameworkAuthentication);
 
-adapter.onTurnError = async (context, error) => {
-  console.error('[Pim] onTurnError:', error);
+// Safe logger: some Bot Framework errors have properties Node's util.inspect
+// cannot format, which crashes console.error itself. Stringify manually first.
+function logErr(label, err) {
+  const parts = {
+    label,
+    name: err && err.name,
+    message: err && err.message,
+    status: err && (err.statusCode || err.status),
+    stack: err && err.stack && String(err.stack).split('\n').slice(0, 8).join(' | '),
+  };
   try {
-    await context.sendActivity("Oops — something tripped me up on that one 😬 Try asking again?");
+    console.log('[Pim:ERR] ' + JSON.stringify(parts));
+  } catch (_) {
+    console.log('[Pim:ERR] ' + label + ' ' + (err && err.message));
+  }
+}
+
+adapter.onTurnError = async (context, error) => {
+  logErr('onTurnError', error);
+  try {
+    await context.sendActivity("Oops — something tripped me up on that one. Try asking again?");
   } catch (e) {
-    console.error('[Pim] failed to send error message:', e);
+    logErr('failed to send error message', e);
   }
 };
 
@@ -218,7 +235,7 @@ async function handlePimMessage(context) {
         temperature: 0.7,
       });
     } catch (err) {
-      console.error('[Pim] OpenAI error:', err);
+      logErr('OpenAI error', err);
       await context.sendActivity("My brain had a hiccup — OpenAI didn't respond. Try again in a sec?");
       return;
     }
@@ -285,9 +302,9 @@ module.exports = async (req, res) => {
   try {
     await adapter.process(req, res, botLogic);
   } catch (err) {
-    console.error('[Pim] adapter.process failed:', err);
+    logErr('adapter.process failed', err);
     if (!res.headersSent) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err && err.message ? err.message : 'Bot error' });
     }
   }
 };
