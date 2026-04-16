@@ -272,12 +272,13 @@ async function botLogic(context) {
 
 // ---------- Vercel serverless handler ----------
 module.exports = async (req, res) => {
-  if (req.method === 'GET') {
-    // Health check so you can hit /api/messages in a browser
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    // Health check so browsers + Azure's endpoint validator both succeed
+    if (req.method === 'HEAD') return res.status(200).end();
     return res.status(200).json({ status: 'ok', bot: 'Pim', endpoint: '/api/messages' });
   }
   if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST, GET');
+    res.setHeader('Allow', 'POST, GET, HEAD');
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
