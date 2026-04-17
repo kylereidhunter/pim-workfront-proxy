@@ -661,15 +661,18 @@ module.exports = async (req, res) => {
       });
     }
 
-    // GET /cron — fires due scheduled messages. Hit every 5 min by Vercel Cron
-    // (configured in vercel.json). Merged into index.js because Vercel wasn't
-    // picking up api/cron.js as its own function.
+    // GET /cron — fires due scheduled messages AND polls Workfront for project
+    // changes, DMing subscribed users about any updates. Called every 5 min by
+    // cron-job.org. Merged into index.js because Vercel wasn't picking up
+    // api/cron.js as its own function.
     else if (path === '/cron' || path === '/cron/') {
       const auth = req.headers.authorization || '';
       if (process.env.CRON_SECRET && !auth.includes(process.env.CRON_SECRET)) {
         return res.status(401).json({ error: 'unauthorized' });
       }
+      const summary = { ok: true };
       try {
+        // Part 1: fire due scheduled messages (weekly digests, reminders, etc.)
         const {
           getDueSchedules,
           getConversationRef,
@@ -678,24 +681,34 @@ module.exports = async (req, res) => {
         const { sendProactive } = require('./lib/proactive');
         const { buildMessage } = require('./lib/message-builder');
         const due = await getDueSchedules();
-        if (due.length === 0) return res.status(200).json({ ok: true, fired: 0 });
-        const results = [];
+        const scheduleResults = [];
         for (const sched of due) {
           try {
             const ref = await getConversationRef(sched.conversationId);
-            if (!ref) { results.push({ id: sched.id, status: 'no-conv-ref' }); continue; }
+            if (!ref) { scheduleResults.push({ id: sched.id, status: 'no-conv-ref' }); continue; }
             const text = await buildMessage(sched.messageKind, sched.messageArgs);
             await sendProactive(ref, text);
             await markFired(sched.id);
-            results.push({ id: sched.id, status: 'sent' });
+            scheduleResults.push({ id: sched.id, status: 'sent' });
           } catch (err) {
-            results.push({ id: sched.id, status: 'error', error: err.message });
+            scheduleResults.push({ id: sched.id, status: 'error', error: err.message });
           }
         }
-        return res.status(200).json({ ok: true, fired: results.length, results });
+        summary.fired = scheduleResults.length;
+        summary.scheduleResults = scheduleResults;
       } catch (err) {
-        return res.status(500).json({ ok: false, error: err.message });
+        summary.scheduleError = err.message;
       }
+      try {
+        // Part 2: poll Workfront, diff against last snapshot, DM subscribed
+        // users about changes to their projects.
+        const { detectAndNotify } = require('./lib/change-detector');
+        const changeSummary = await detectAndNotify();
+        summary.changes = changeSummary;
+      } catch (err) {
+        summary.changeError = err.message;
+      }
+      return res.status(200).json(summary);
     }
 
     // GET / or /health

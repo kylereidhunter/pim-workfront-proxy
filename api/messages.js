@@ -18,6 +18,10 @@ const {
   nextFromCron,
   TZ,
 } = require('./lib/schedule-store');
+const {
+  setSubscription,
+  getSubscriptionByName,
+} = require('./lib/subscriptions');
 
 // ---------- Bot Framework adapter ----------
 // Microsoft's recommended wiring: build the credentials factory from env vars,
@@ -184,6 +188,16 @@ REVIEW SCHEDULE REFERENCE (typical):
 - Marketing (MKT) Review: Wednesday. Proofs + JPEGs due 1 PM Tuesday.
 - Exec Review: Thursday. Proofs + JPEGs due 1 PM Wednesday.
 (Always use actual dates from Workfront — this is just a sanity check.)
+
+PROJECT UPDATE NOTIFICATIONS (opt-in — OFF by default):
+Pim can DM a user when a project they're on changes (new assignee, review date moved, etc.). Each user individually opts in.
+
+- Turn ON → call \`enableProjectUpdates\`. Triggers: "send me updates on my projects", "notify me when things change", "turn on notifications", "keep me posted".
+- Turn OFF → call \`disableProjectUpdates\`. Triggers: "stop sending me updates", "turn off notifications", "mute project alerts".
+- Check status → call \`getNotificationStatus\`. Triggers: "am I getting updates?", "are my notifications on?".
+- After enabling, confirm and explain what they'll get: "You're opted in! I'll DM you if any FY27 project where you're Lead Designer / Copywriter / PM gets a new assignee or a shifted review date. Say 'stop project updates' any time to turn it off."
+- After disabling, simple confirmation: "Muted. No more project-update DMs."
+- If they ask WHAT counts as an update: assignee changes (designer/copywriter/pm) and review date changes (CR/MKT/Exec). Proof status changes are planned but not live yet.
 
 SCHEDULED MESSAGES & REMINDERS:
 You can post to "this chat" on a schedule. All times are Central Time (America/Chicago).
@@ -396,6 +410,30 @@ const tools = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'enableProjectUpdates',
+      description: 'Turn ON project-update DMs for the person sending the message. Call this when they say things like "send me updates on my projects", "notify me about changes", "keep me posted on my projects", etc. Pim will then DM them when a Workfront project they\'re on (as Lead Designer, Lead Copywriter, or PM) has an assignee change or review date change.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'disableProjectUpdates',
+      description: 'Turn OFF project-update DMs for the person sending the message. Call this when they say "stop sending project updates", "turn off notifications", "mute project updates", etc.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'getNotificationStatus',
+      description: 'Check whether the current user has project-update DMs enabled. Use when they ask "am I getting updates?", "are notifications on?", "what\'s my status?", etc.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
 ];
 
 // ---------- Proxy caller ----------
@@ -496,6 +534,39 @@ async function executeTool(name, args, ctx) {
       case 'cancelSchedule': {
         const ok = await cancelSchedule(args.scheduleId);
         return ok ? { ok: true, cancelled: args.scheduleId } : { error: `Schedule not found: ${args.scheduleId}` };
+      }
+      case 'enableProjectUpdates': {
+        if (!ctx || !ctx.conversationId || !ctx.userName) return { error: 'No user context' };
+        const rec = await setSubscription({
+          conversationId: ctx.conversationId,
+          userName: ctx.userName,
+          enabled: true,
+        });
+        return {
+          ok: true,
+          userName: rec.userName,
+          enabled: true,
+          note: 'Pim will DM you on assignee changes and review-date changes for any FY27 project where you are Lead Designer, Lead Copywriter, or PM.',
+        };
+      }
+      case 'disableProjectUpdates': {
+        if (!ctx || !ctx.userName) return { error: 'No user context' };
+        const rec = await setSubscription({
+          conversationId: ctx.conversationId,
+          userName: ctx.userName,
+          enabled: false,
+        });
+        return { ok: true, userName: rec.userName, enabled: false };
+      }
+      case 'getNotificationStatus': {
+        if (!ctx || !ctx.userName) return { error: 'No user context' };
+        const sub = await getSubscriptionByName(ctx.userName);
+        if (!sub) return { enabled: false, note: 'No subscription record — updates are off by default.' };
+        return {
+          enabled: !!sub.enabled,
+          userName: sub.userName,
+          updatedAt: sub.updatedAt,
+        };
       }
       default:
         return { error: `Unknown tool: ${name}` };
