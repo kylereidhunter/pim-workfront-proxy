@@ -189,6 +189,17 @@ REVIEW SCHEDULE REFERENCE (typical):
 - Exec Review: Thursday. Proofs + JPEGs due 1 PM Wednesday.
 (Always use actual dates from Workfront — this is just a sanity check.)
 
+SENDING DOCUMENTS FROM A PROJECT:
+When a user asks "send me the SKU list for [project]", "grab the brief for [project]", "what documents are on [project]?", etc., call \`findProjectDocuments\` with the project name and (if they named a specific doc type) the document filter.
+
+- Project phrasing like "the Patriotic Porch one" or "WK15 Patriotic" → projectName: "Patriotic Porch" or "WK15 Patriotic". Partial matches work.
+- Specific document like "SKU list", "brief", "approved proof" → documentName: "SKU", "brief", "proof".
+- Return the results as clickable markdown links: \`- **[document name](documentUrl)** — vN, uploaded [date]\`. The link opens Workfront in the user's browser where they can preview/download.
+- If exactly one match, lead with it: "Here's the SKU list for **Patriotic Porch** 📎 → [Open in Workfront](...)".
+- If multiple matches, list them so the user can pick.
+- If zero matches, say so plainly ("No documents matching 'SKU' on **Patriotic Porch**. Try a different name?") — do NOT invent a URL.
+- NEVER hand back a fake / made-up documentUrl. Only use what the tool returns.
+
 PROJECT UPDATE NOTIFICATIONS (opt-in — OFF by default):
 Pim can DM a user when a project they're on changes. Each user individually opts in.
 
@@ -298,6 +309,27 @@ const tools = [
           name: { type: 'string', description: 'Project name to search (e.g. WK15, Patriotic)' },
         },
         required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'findProjectDocuments',
+      description: 'Find documents attached to a Workfront project. Use this for "send me the SKU list for [project]", "grab the brief for [project]", "what docs are on [project]?", etc. Returns documents with a Workfront URL the user can click to view/download. Each result has a documentUrl plus metadata (filename, version, upload date).',
+      parameters: {
+        type: 'object',
+        properties: {
+          projectName: {
+            type: 'string',
+            description: 'The project name or partial name to search (e.g. "WK15 Patriotic", "Patriotic Porch", "Summer BBQ").',
+          },
+          documentName: {
+            type: 'string',
+            description: 'Optional — filter documents by name. E.g. "SKU", "brief", "proof". Matched case-insensitively against the document name or filename. Omit to list all documents on the project.',
+          },
+        },
+        required: ['projectName'],
       },
     },
   },
@@ -472,6 +504,35 @@ async function executeTool(name, args, ctx) {
         return await callProxy(`/tasks?projectId=${encodeURIComponent(args.projectId)}`);
       case 'getProofStatus':
         return await callProxy(`/proofs?name=${encodeURIComponent(args.name)}`);
+      case 'findProjectDocuments': {
+        const docs = await callProxy(`/docs?name=${encodeURIComponent(args.projectName)}`);
+        if (!docs || !docs.data) return docs;
+        const filterLower = (args.documentName || '').toLowerCase();
+        const matches = docs.data
+          .filter(d => {
+            if (!filterLower) return true;
+            const n = String(d.name || '').toLowerCase();
+            const f = String(d.fileName || '').toLowerCase();
+            return n.includes(filterLower) || f.includes(filterLower);
+          })
+          .map(d => ({
+            documentName: d.name,
+            fileName: d.fileName,
+            projectName: d.projectName,
+            projectID: d.projectID,
+            version: d.version,
+            uploadedAt: d.versionEntryDate,
+            documentUrl: d.docID ? `https://athome.my.workfront.com/document/${d.docID}/details` : null,
+            hasProof: d.hasProof,
+            proofStatus: d.proofStatus,
+          }));
+        return {
+          projectSearched: args.projectName,
+          nameFilter: args.documentName || null,
+          count: matches.length,
+          documents: matches,
+        };
+      }
       case 'getUpcomingReviews':
         return await callProxy(`/upcoming-reviews?name=${encodeURIComponent(args.name || 'FY27')}`);
       case 'getReviewsInWindow': {
