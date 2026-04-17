@@ -274,11 +274,13 @@ async function handlePimMessage(context) {
     (firstName ? ` (first name: ${firstName})` : '') +
     (fromEmail ? `, email/id ${fromEmail}` : '') + '.\n' +
     `Greet THEM by name — use "${firstName || fromName || 'there'}", not any example name from the prompt. Kyle is NOT the user unless the sender above is literally Kyle.\n` +
-    `When they say "I", "me", "my", or "mine", it refers to ${fromName || 'that person'} — whoever is messaging right now, regardless of who it is.\n` +
-    `To answer "what do I have?" type questions, call a tool to get projects and then ` +
-    `filter by matching "${firstName || fromName}" against either DE:Lead Designer or DE:Lead Copywriter. ` +
-    `Partial/first-name matching is fine — "${firstName}" matches "${firstName} Smith". ` +
-    `Include projects from ALL channels (email, text/push, loyalty) — don't drop text/push or loyalty projects just because they're not email.`;
+    `When they say "I", "me", "my", or "mine", it refers to ${fromName || 'that person'} — whoever is messaging right now, regardless of who it is.\n\n` +
+    `FILTERING "MY PROJECTS" (STRICT — do not skip any of these rules):\n` +
+    `1. A project is "${firstName || fromName}'s" ONLY if "${firstName || fromName}" appears in one of these fields: DE:Lead Designer, DE:Lead Copywriter, OR pm (the project owner). Case-insensitive, partial-match on first name is fine ("${firstName}" matches "${firstName} Smith").\n` +
+    `2. NEVER include a project just because it's in the requested review window — the name must match one of those three fields.\n` +
+    `3. If ZERO projects match, say exactly that: "I don't see you listed as Lead Designer, Lead Copywriter, or PM on anything going to [review] [when]. Want me to show the full list for that review?" DO NOT list other people's projects as a fallback.\n` +
+    `4. When listing, show WHY the user matched — e.g. "(you're PM)" or "(Lead Designer)" — so they can sanity-check.\n` +
+    `5. Include projects from ALL channels (email, text/push, loyalty) — don't drop text/push or loyalty just because they're not email.`;
 
   const messages = [
     {
