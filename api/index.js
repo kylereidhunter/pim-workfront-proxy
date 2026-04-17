@@ -184,9 +184,13 @@ module.exports = async (req, res) => {
       const userQuery = String(query.name || 'FY27').trim();
       const normalize = (s) => String(s || '').toLowerCase().replace(/[_\-\s]+/g, ' ').trim();
       const queryWords = normalize(userQuery).split(' ').filter(Boolean);
-      // Use the longest query word as the Workfront server-side filter — most
-      // distinctive, most likely to return a useful set.
-      const wfSearchWord = queryWords.sort((a, b) => b.length - a.length)[0] || userQuery;
+      // Use the longest raw (original-case) word for the Workfront server-side
+      // filter — Workfront's name_Mod=contains is case-sensitive, so we must
+      // Title-Case it. Client-side filter still uses the lowercase words.
+      const rawWords = userQuery.replace(/[_\-]+/g, ' ').split(/\s+/).filter(Boolean);
+      const longestRaw = rawWords.sort((a, b) => b.length - a.length)[0] || userQuery;
+      const titleCase = (w) => w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w;
+      const wfSearchWord = titleCase(longestRaw);
       const result = await callWorkfront('docu/search', {
         'project:name': wfSearchWord,
         'project:name_Mod': 'contains',
