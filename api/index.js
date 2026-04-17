@@ -42,6 +42,10 @@ function callWorkfront(endpoint, params) {
   });
 }
 
+function projectUrlFor(id) {
+  return id ? `https://${WORKFRONT_HOST}/project/${id}/overview` : null;
+}
+
 function extractReviewDates(result) {
   if (result.data) {
     result.data.forEach(proj => {
@@ -68,6 +72,7 @@ function extractReviewDates(result) {
         proj.pm = proj.owner.name;
         delete proj.owner;
       }
+      proj.projectUrl = projectUrlFor(proj.ID);
       delete proj.tasks;
     });
   }
@@ -104,6 +109,7 @@ module.exports = async (req, res) => {
       const result = await callWorkfront(`proj/${projectId}`, {
         fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Proof URL,DE:Project Type,description,owner:name,tasks:name,tasks:status,tasks:assignedTo:name,tasks:plannedCompletionDate'
       });
+      if (result.data) result.data.projectUrl = projectUrlFor(result.data.ID || projectId);
       return res.status(200).json(result);
     }
 
@@ -151,6 +157,9 @@ module.exports = async (req, res) => {
         fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Proof URL',
         '$$LIMIT': '100'
       });
+      if (result.data) {
+        result.data.forEach(proj => { proj.projectUrl = projectUrlFor(proj.ID); });
+      }
       return res.status(200).json(result);
     }
 
