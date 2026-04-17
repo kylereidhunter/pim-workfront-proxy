@@ -74,28 +74,63 @@ function groupByDay(projects, dateKey) {
   return map;
 }
 
-async function buildWeeklyReviewsDigest({ window = 'nextweek' } = {}) {
-  const [cr, mkt, execR] = await Promise.all([
-    fetchJSON(`/reviews?reviewType=creative&window=${window}`),
-    fetchJSON(`/reviews?reviewType=marketing&window=${window}`),
-    fetchJSON(`/reviews?reviewType=exec&window=${window}`),
-  ]);
+// Scoped digest builder. Accepts:
+//   window     - 'thisweek' | 'nextweek' | ...
+//   reviewType - 'creative' | 'marketing' | 'exec' | undefined (all three)
+//   person     - optional person name filter
+async function buildWeeklyReviewsDigest({ window = 'nextweek', reviewType, person } = {}) {
+  const wantTypes = reviewType
+    ? [reviewType]
+    : ['creative', 'marketing', 'exec'];
 
-  const total = cr.count + mkt.count + execR.count;
+  const results = await Promise.all(
+    wantTypes.map(t => {
+      const q = new URLSearchParams({ reviewType: t, window });
+      if (person) q.set('person', person);
+      return fetchJSON(`/reviews?${q}`);
+    })
+  );
+  const byType = Object.fromEntries(wantTypes.map((t, i) => [t, results[i]]));
+
   const windowLabel = window === 'nextweek' ? 'next week' : window === 'thisweek' ? 'this week' : window;
+  const total = results.reduce((s, r) => s + (r.count || 0), 0);
+  const personBit = person ? ` for ${person}` : '';
+  const scopeBit = reviewType
+    ? (reviewType === 'creative' ? 'Creative Review' : reviewType === 'marketing' ? 'Marketing Review' : 'Exec Review')
+    : 'Reviews';
+
   let header;
   if (total === 0) {
-    header = `**Reviews for ${windowLabel}** — all clear. Nothing on the calendar. ✅\n`;
-  } else {
-    header = `**Pim's Weekly Digest — Reviews for ${windowLabel}** (${total} project${total === 1 ? '' : 's'})\n`;
+    header = `**${scopeBit} ${windowLabel}${personBit}** — all clear. ✅\n`;
+    return header;
   }
+  header = reviewType
+    ? `**${scopeBit} — ${windowLabel}${personBit}** (${total} project${total === 1 ? '' : 's'})\n`
+    : `**Pim's Weekly Digest — Reviews for ${windowLabel}${personBit}** (${total} project${total === 1 ? '' : 's'})\n`;
 
   const sections = [];
+  const dateKeyFor = {
+    creative: 'creativeReviewDate',
+    marketing: 'marketingReviewDate',
+    exec: 'execReviewDate',
+  };
+  const titleFor = {
+    creative: 'Creative Review',
+    marketing: 'Marketing Review',
+    exec: 'Exec Review',
+  };
 
-  function section(title, endpoint, dateKey) {
-    if (!endpoint.projects || endpoint.projects.length === 0) return;
-    const byDay = groupByDay(endpoint.projects, dateKey);
-    const lines = [`\n**${title}** (${endpoint.projects.length})`];
+  for (const t of wantTypes) {
+    const endpoint = byType[t];
+    if (!endpoint.projects || endpoint.projects.length === 0) {
+      // Only add an empty-section note in the multi-type view.
+      if (!reviewType) sections.push(`\n**${titleFor[t]}** — nothing scheduled`);
+      continue;
+    }
+    const byDay = groupByDay(endpoint.projects, dateKeyFor[t]);
+    const lines = reviewType
+      ? []
+      : [`\n**${titleFor[t]}** (${endpoint.projects.length})`];
     if (byDay.size === 0) {
       endpoint.projects.forEach(p => lines.push(renderProjectLine(p)));
     } else {
@@ -107,11 +142,7 @@ async function buildWeeklyReviewsDigest({ window = 'nextweek' } = {}) {
     sections.push(lines.join('\n'));
   }
 
-  section('Creative Review', cr, 'creativeReviewDate');
-  section('Marketing Review', mkt, 'marketingReviewDate');
-  section('Exec Review', execR, 'execReviewDate');
-
-  const footer = total > 0
+  const footer = (!reviewType && total > 0)
     ? `\n\n_Proofs: CR due 3pm Mon · MKT due 1pm Tue · Exec due 1pm Wed._`
     : '';
 

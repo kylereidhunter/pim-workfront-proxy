@@ -140,12 +140,16 @@ If a project has a review date in the requested window, include it regardless of
 
 HOW TO FIND REVIEWS FOR A DATE RANGE:
 
-**SCOPE — pick the right tool:**
-- **Unscoped** — "reviews this week", "reviews next week", "review schedule", "what's going through reviews" (no review type, no person, no channel) → call \`getReviewsDigest({window})\` and emit its \`text\` field VERBATIM. One-line greeting above it is fine; do NOT reformat, do NOT drop bullets, do NOT add fields.
-- **Named review type only** → \`getReviewsInWindow\` with just that reviewType.
-- **"My / mine" or named person** → \`getReviewsInWindow\` with \`person\`. For "my" calls, zero matches = "Nothing of yours on [review] [window]"; never list others.
-- **Named channel** → add \`channel\`.
-- Combine args as needed ("my MKT review this week" = reviewType:marketing + person:<user>).
+**SCOPE — always use \`getReviewsDigest\`:**
+Every review-listing question goes through \`getReviewsDigest\`. It pre-formats the whole answer — you output the \`text\` field VERBATIM (a one-line greeting above it is fine). Do NOT call \`getReviewsInWindow\` for rendering. Do NOT re-format, truncate, or summarize — the digest IS the answer.
+
+Map the user's ask to these args:
+- **Unscoped** ("reviews this week", "review schedule", "what's going through reviews") → \`{ window }\`. Returns all three reviews grouped.
+- **Single review type** ("what's on MKT next week", "creative review this week") → \`{ window, reviewType }\`.
+- **"My / mine"** ("what do I have on MKT review", "my reviews next week") → \`{ window, reviewType?, person: "<user's first name>" }\`.
+- **Named person** ("what's Meagan on", "Charito's CR list") → \`{ window, reviewType?, person: "Meagan" }\`.
+
+Only use \`getReviewsInWindow\` for programmatic follow-up questions like "count how many Meagan has" — where you need the raw array. Never for rendering.
 
 **Arguments:**
 - Window: "this week" → window=thisweek ; "next week" → window=nextweek ; "this month" → window=thismonth ; "next 7 days" → window=next7 ; "past week" → window=last7. Specific dates → startDate=YYYY-MM-DD + endDate=YYYY-MM-DD.
@@ -461,7 +465,7 @@ const tools = [
     type: 'function',
     function: {
       name: 'getReviewsDigest',
-      description: 'Returns a fully pre-formatted digest of ALL reviews (CR + MKT + Exec) in a given week, grouped by day with clickable Workfront links. Use this for unscoped "reviews this week" / "reviews next week" / "what\'s going through reviews" questions. The response is a finished markdown string — output it VERBATIM with at most a one-line greeting on top. Do NOT reformat, summarize, or drop any lines.',
+      description: 'Returns a fully pre-formatted digest of review projects for a window, grouped by day with Workfront links. USE THIS FOR EVERY review-listing question (unscoped, single review type, and "my/person" scoped). The response is a finished markdown string — output it VERBATIM with at most a one-line greeting on top. Do NOT reformat, summarize, truncate, or drop any lines.',
       parameters: {
         type: 'object',
         properties: {
@@ -469,6 +473,15 @@ const tools = [
             type: 'string',
             enum: ['thisweek', 'nextweek'],
             description: 'Which week to digest.',
+          },
+          reviewType: {
+            type: 'string',
+            enum: ['creative', 'marketing', 'exec'],
+            description: 'Optional. Pass for single-review queries ("MKT review next week"). Omit for unscoped "reviews this week" — digest will include all three.',
+          },
+          person: {
+            type: 'string',
+            description: 'Optional first name / full name to filter to that person\'s projects. Use for "my reviews" (pass user\'s first name) or "what\'s Meagan on".',
           },
         },
         required: ['window'],
@@ -691,8 +704,12 @@ async function executeTool(name, args, ctx) {
         return await callProxy(`/upcoming-reviews?name=${encodeURIComponent(args.name || 'FY27')}`);
       case 'getReviewsDigest': {
         const { buildWeeklyReviewsDigest } = require('./lib/message-builder');
-        const text = await buildWeeklyReviewsDigest({ window: args.window || 'thisweek' });
-        return { window: args.window || 'thisweek', text };
+        const text = await buildWeeklyReviewsDigest({
+          window: args.window || 'thisweek',
+          reviewType: args.reviewType,
+          person: args.person,
+        });
+        return { window: args.window || 'thisweek', reviewType: args.reviewType, person: args.person, text };
       }
       case 'getReviewsInWindow': {
         const q = new URLSearchParams();
