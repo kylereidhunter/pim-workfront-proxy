@@ -95,10 +95,17 @@ CHANNELS (all are in scope — never drop one):
 If a project has a review date in the requested window, include it regardless of channel. Group or label by channel if helpful, but never silently omit.
 
 HOW TO FIND REVIEWS FOR A DATE RANGE:
-1. Call \`getUpcomingReviews\` (or \`searchProjects\` with name="FY27")
-2. Each project has fields \`creativeReviewDate\`, \`marketingReviewDate\`, \`execReviewDate\` — these are the REAL review dates pulled from the R1/R2/R3 tasks.
-3. Filter those fields — NOT the project name, NOT the channel — to find what's in the requested window.
-4. If someone asks about "next week's Creative Review", look at \`creativeReviewDate\` falling in that week and include ALL channels (email, text/push, loyalty).
+- ALWAYS use \`getReviewsInWindow\` for date-bounded questions ("this week's Creative Review", "what's on MKT review next week", "what's going to exec review this month"). The server does the filtering — the response \`projects\` array IS the answer. Do NOT filter it yourself, do NOT drop any entries, do NOT add any entries.
+- Map the user's phrasing to the right arguments:
+  - "Creative Review" / "CR" → reviewType=creative
+  - "Marketing Review" / "MKT Review" / "MR" → reviewType=marketing
+  - "Exec Review" / "ER" → reviewType=exec
+  - Unspecified / "any review" → reviewType=any
+  - "this week" → window=thisweek ; "next week" → window=nextweek ; "this month" → window=thismonth
+  - "next 7 days" → window=next7 ; "past week" → window=last7
+  - For specific dates, pass startDate=YYYY-MM-DD and endDate=YYYY-MM-DD.
+- Only call \`searchProjects\` or \`getUpcomingReviews\` when the user wants the FULL project list (no date filter).
+- If \`getReviewsInWindow\` returns \`count: 0\`, say "Nothing's on [review type] [window]" — do NOT call another tool to invent results.
 
 FORMATTING RULES (Teams renders markdown — use it liberally):
 - Strip the "FY27_" prefix when displaying project names.
@@ -203,12 +210,42 @@ const tools = [
     type: 'function',
     function: {
       name: 'getUpcomingReviews',
-      description: 'Get FY27 projects with upcoming review dates. Each project includes a projectUrl field (Workfront project page) for link requests. Use this for "what\'s in next week\'s Creative Review" type questions.',
+      description: 'Get FY27 projects with upcoming review dates. Each project includes a projectUrl field (Workfront project page) for link requests. Prefer getReviewsInWindow for date-bounded questions.',
       parameters: {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'Name filter, defaults to FY27' },
         },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'getReviewsInWindow',
+      description: 'Server-filtered list of FY27 projects whose review date falls inside a date window. ALWAYS use this for "what\'s on Creative Review this/next week?", "what\'s in MKT review next week?", "what\'s going to exec review?" The server does the filtering — do NOT filter the results yourself, just format them. Each project comes with projectUrl.',
+      parameters: {
+        type: 'object',
+        properties: {
+          reviewType: {
+            type: 'string',
+            enum: ['creative', 'marketing', 'exec', 'any'],
+            description: 'Which review date to filter on. Default: any.',
+          },
+          window: {
+            type: 'string',
+            enum: ['thisweek', 'nextweek', 'last7', 'next7', 'thismonth'],
+            description: 'Named window. Use thisweek/nextweek/thismonth for the common cases. Provide EITHER window OR startDate+endDate.',
+          },
+          startDate: { type: 'string', description: 'ISO date YYYY-MM-DD (inclusive). Use with endDate for custom ranges.' },
+          endDate: { type: 'string', description: 'ISO date YYYY-MM-DD (inclusive). Use with startDate.' },
+          channel: {
+            type: 'string',
+            enum: ['email', 'text-push', 'loyalty', 'all'],
+            description: 'Filter by channel. Default all — includes email, text/push, and loyalty.',
+          },
+        },
+        required: ['reviewType'],
       },
     },
   },
@@ -241,6 +278,15 @@ async function executeTool(name, args) {
         return await callProxy(`/proofs?name=${encodeURIComponent(args.name)}`);
       case 'getUpcomingReviews':
         return await callProxy(`/upcoming-reviews?name=${encodeURIComponent(args.name || 'FY27')}`);
+      case 'getReviewsInWindow': {
+        const q = new URLSearchParams();
+        q.set('reviewType', args.reviewType || 'any');
+        if (args.window) q.set('window', args.window);
+        if (args.startDate) q.set('startDate', args.startDate);
+        if (args.endDate) q.set('endDate', args.endDate);
+        if (args.channel) q.set('channel', args.channel);
+        return await callProxy(`/reviews?${q}`);
+      }
       default:
         return { error: `Unknown tool: ${name}` };
     }

@@ -46,6 +46,46 @@ function projectUrlFor(id) {
   return id ? `https://${WORKFRONT_HOST}/project/${id}/overview` : null;
 }
 
+// Workfront returns dates like "2026-04-21T15:00:00:000-0500" (colon before ms). Fix to a real ISO string.
+function parseWFDate(s) {
+  if (!s) return null;
+  const fixed = s.replace(/(\d{2}):(\d{3})/, '$1.$2');
+  const d = new Date(fixed);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// Resolve a window keyword to a [start, end] date range (inclusive).
+function resolveWindow(window, startDate, endDate) {
+  if (startDate && endDate) {
+    return [new Date(startDate + 'T00:00:00'), new Date(endDate + 'T23:59:59')];
+  }
+  const now = new Date();
+  const sunday = new Date(now);
+  sunday.setDate(now.getDate() - now.getDay());
+  sunday.setHours(0, 0, 0, 0);
+  const saturday = new Date(sunday);
+  saturday.setDate(sunday.getDate() + 6);
+  saturday.setHours(23, 59, 59, 999);
+  if (window === 'thisweek') return [sunday, saturday];
+  if (window === 'nextweek') {
+    const ns = new Date(sunday); ns.setDate(sunday.getDate() + 7);
+    const ne = new Date(saturday); ne.setDate(saturday.getDate() + 7);
+    return [ns, ne];
+  }
+  if (window === 'last7' || window === 'next7') {
+    const s = new Date(now); const e = new Date(now);
+    if (window === 'last7') s.setDate(now.getDate() - 7); else e.setDate(now.getDate() + 7);
+    s.setHours(0,0,0,0); e.setHours(23,59,59,999);
+    return [s, e];
+  }
+  if (window === 'thismonth') {
+    const s = new Date(now.getFullYear(), now.getMonth(), 1);
+    const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    return [s, e];
+  }
+  return [null, null];
+}
+
 function extractReviewDates(result) {
   if (!result.data) return result;
   result.data = result.data.map(proj => {
@@ -177,10 +217,67 @@ module.exports = async (req, res) => {
         name: query.name || 'FY27',
         name_Mod: 'contains',
         status: 'CUR',
-        fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Proof URL,owner:name,tasks:name,tasks:plannedCompletionDate',
+        fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Project Type,DE:Proof URL,owner:name,tasks:name,tasks:plannedCompletionDate',
         '$$LIMIT': '200'
       });
       return res.status(200).json(extractReviewDates(result));
+    }
+
+    // GET /reviews?reviewType=creative|marketing|exec|any&window=thisweek|nextweek|last7|next7|thismonth
+    //        &startDate=YYYY-MM-DD&endDate=YYYY-MM-DD&name=FY27&channel=email|text-push|loyalty|all
+    // Returns ONLY projects whose matching review date falls in the window — server-side filter.
+    else if (path === '/reviews' || path === '/reviews/') {
+      const reviewType = (query.reviewType || 'any').toLowerCase();
+      const [start, end] = resolveWindow(query.window, query.startDate, query.endDate);
+      if (!start || !end) {
+        return res.status(400).json({
+          error: 'Provide window=thisweek|nextweek|last7|next7|thismonth OR startDate=YYYY-MM-DD&endDate=YYYY-MM-DD',
+        });
+      }
+      const channel = (query.channel || 'all').toLowerCase();
+      const raw = await callWorkfront('proj/search', {
+        name: query.name || 'FY27',
+        name_Mod: 'contains',
+        status: 'CUR',
+        fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Project Type,DE:Proof URL,owner:name,tasks:name,tasks:plannedCompletionDate',
+        '$$LIMIT': '200',
+      });
+      const extracted = extractReviewDates(raw);
+      const typeToField = {
+        creative: 'creativeReviewDate',
+        marketing: 'marketingReviewDate',
+        mkt: 'marketingReviewDate',
+        exec: 'execReviewDate',
+      };
+      const matchesWindow = (proj) => {
+        const fields = reviewType === 'any'
+          ? ['creativeReviewDate', 'marketingReviewDate', 'execReviewDate']
+          : [typeToField[reviewType]];
+        return fields.some(f => {
+          const d = parseWFDate(proj[f]);
+          return d && d >= start && d <= end;
+        });
+      };
+      const matchesChannel = (proj) => {
+        if (channel === 'all') return true;
+        const ch = (proj.channel || '').toLowerCase();
+        const type = (proj.projectType || '').toLowerCase();
+        const name = (proj.name || '').toLowerCase();
+        if (channel === 'email') return ch.includes('email');
+        if (channel === 'text-push' || channel === 'push' || channel === 'text' || channel === 'sms') {
+          return ch.includes('text') || ch.includes('sms') || ch.includes('push');
+        }
+        if (channel === 'loyalty') return type.includes('loyalty') || name.includes('loyalty');
+        return true;
+      };
+      const filtered = (extracted.data || []).filter(p => matchesWindow(p) && matchesChannel(p));
+      return res.status(200).json({
+        window: { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) },
+        reviewType,
+        channel,
+        count: filtered.length,
+        projects: filtered,
+      });
     }
 
     // POST /upload-proof - Upload a proof to a Workfront project
