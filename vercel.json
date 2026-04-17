@@ -1,6 +1,17 @@
 {
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/api/index" }
+    { "source": "/", "destination": "/api/index" },
+    { "source": "/health", "destination": "/api/index" },
+    { "source": "/search", "destination": "/api/index" },
+    { "source": "/search/", "destination": "/api/index" },
+    { "source": "/project/:id", "destination": "/api/index" },
+    { "source": "/tasks", "destination": "/api/index" },
+    { "source": "/proofs", "destination": "/api/index" },
+    { "source": "/my-projects", "destination": "/api/index" },
+    { "source": "/upcoming-reviews", "destination": "/api/index" },
+    { "source": "/reviews", "destination": "/api/index" },
+    { "source": "/upload-proof", "destination": "/api/index" },
+    { "source": "/weekly-digest", "destination": "/api/index" }
   ],
   "crons": [
     { "path": "/api/cron", "schedule": "*/5 * * * *" }
