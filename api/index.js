@@ -495,19 +495,17 @@ module.exports = async (req, res) => {
           return d && d >= start && d <= end;
         });
 
-      // Fetch all FY27 docs once; group by project
-      const docSearch = String(query.name || 'FY27').trim();
-      const mpCandidates = [docSearch, docSearch.charAt(0).toUpperCase() + docSearch.slice(1).toLowerCase(), docSearch.toUpperCase()];
-      let docRaw;
-      for (const c of [...new Set(mpCandidates)]) {
-        docRaw = await callWorkfront('docu/search', {
-          'project:name': c,
-          'project:name_Mod': 'contains',
-          fields: 'ID,name,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus',
-          '$$LIMIT': '500',
-        });
-        if (docRaw && docRaw.data && docRaw.data.length) break;
-      }
+      // Fetch docs filtered by the specific project IDs in the window.
+      // (Filtering by name would hit the 500-doc cap and miss newer projects.)
+      const projIdList = projects.map(p => p.ID).filter(Boolean);
+      const docRaw = projIdList.length
+        ? await callWorkfront('docu/search', {
+            'project:ID': projIdList.join(','),
+            'project:ID_Mod': 'in',
+            fields: 'ID,name,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus',
+            '$$LIMIT': '500',
+          })
+        : { data: [] };
       const docsByProject = new Map();
       (docRaw && docRaw.data || []).forEach(d => {
         const pid = d.project && d.project.ID;
@@ -626,25 +624,19 @@ module.exports = async (req, res) => {
           return d && d >= start && d <= end;
         });
 
-      // Step 2: get all docs for those projects in one shot.
-      // Workfront's contains is case-sensitive. Try the raw query first,
-      // then Title-Case, then UPPER-CASE so "fy27"/"FY27"/"Fy27" all work.
-      const docSearch = String(query.name || 'FY27').trim();
-      const docCandidates = [docSearch];
-      const docTC = docSearch.charAt(0).toUpperCase() + docSearch.slice(1).toLowerCase();
-      if (docTC !== docSearch) docCandidates.push(docTC);
-      const docUC = docSearch.toUpperCase();
-      if (docUC !== docSearch && docUC !== docTC) docCandidates.push(docUC);
-      let docRaw;
-      for (const c of docCandidates) {
-        docRaw = await callWorkfront('docu/search', {
-          'project:name': c,
-          'project:name_Mod': 'contains',
-          fields: 'ID,name,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
-          '$$LIMIT': '500',
-        });
-        if (docRaw && docRaw.data && docRaw.data.length) break;
-      }
+      // Step 2: fetch docs filtered by the specific project IDs we picked
+      // (not by project name — that returns oldest 500 across all FY27 and
+      // misses newer projects). This guarantees we get every doc for every
+      // project in the window.
+      const projIdList = projects.map(p => p.ID).filter(Boolean);
+      const docRaw = projIdList.length
+        ? await callWorkfront('docu/search', {
+            'project:ID': projIdList.join(','),
+            'project:ID_Mod': 'in',
+            fields: 'ID,name,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
+            '$$LIMIT': '500',
+          })
+        : { data: [] };
       const docsByProject = new Map();
       (docRaw && docRaw.data || []).forEach(d => {
         const pid = d.project && d.project.ID;
