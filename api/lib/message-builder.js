@@ -52,9 +52,20 @@ function renderProjectLine(p) {
   return `- **${shortName(p.name)}**${chBit} — ${designer} / ${copy}${url}`;
 }
 
+function parseWFDateMs(s) {
+  if (!s) return 0;
+  const fixed = String(s).replace(/(\d{2}):(\d{3})/, '$1.$2');
+  const d = new Date(fixed);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
 function groupByDay(projects, dateKey) {
+  // Sort projects by their date first so Map insertion order is chronological.
+  const sorted = projects
+    .slice()
+    .sort((a, b) => parseWFDateMs(a[dateKey]) - parseWFDateMs(b[dateKey]));
   const map = new Map();
-  for (const p of projects) {
+  for (const p of sorted) {
     const dateStr = fmtMD(p[dateKey]);
     if (!dateStr) continue;
     if (!map.has(dateStr)) map.set(dateStr, []);
