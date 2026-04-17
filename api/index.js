@@ -175,30 +175,48 @@ module.exports = async (req, res) => {
     // GET /docs?name=FY27 — all documents on matching projects, with current
     // version + proof info. Used by the change detector to diff new uploads,
     // version bumps, and proof status changes.
+    //
+    // Matching is fuzzy on project name: spaces/underscores/hyphens are
+    // treated as equivalent, and multi-word queries match if ALL words appear
+    // anywhere in the normalized project name. This lets "coffee table"
+    // match "FY27_WK15_5-14_Refresh_Your_Coffee_Table-Email".
     else if (path === '/docs' || path === '/docs/') {
+      const userQuery = String(query.name || 'FY27').trim();
+      const normalize = (s) => String(s || '').toLowerCase().replace(/[_\-\s]+/g, ' ').trim();
+      const queryWords = normalize(userQuery).split(' ').filter(Boolean);
+      // Use the longest query word as the Workfront server-side filter — most
+      // distinctive, most likely to return a useful set.
+      const wfSearchWord = queryWords.sort((a, b) => b.length - a.length)[0] || userQuery;
       const result = await callWorkfront('docu/search', {
-        'project:name': query.name || 'FY27',
+        'project:name': wfSearchWord,
         'project:name_Mod': 'contains',
         fields: 'ID,name,lastUpdateDate,project:ID,project:name,currentVersion:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:proofDecision,currentVersion:proofStatusDate,currentVersion:fileName',
         '$$LIMIT': '500',
       });
       if (result.data) {
-        result.data = result.data.map(d => ({
-          docID: d.ID,
-          name: d.name,
-          projectID: d.project ? d.project.ID : null,
-          projectName: d.project ? d.project.name : null,
-          lastUpdateDate: d.lastUpdateDate,
-          version: d.currentVersion ? d.currentVersion.version : null,
-          versionID: d.currentVersion ? d.currentVersion.ID : null,
-          versionEntryDate: d.currentVersion ? d.currentVersion.entryDate : null,
-          fileName: d.currentVersion ? d.currentVersion.fileName : null,
-          proofID: d.currentVersion ? d.currentVersion.proofID : null,
-          proofStatus: d.currentVersion ? d.currentVersion.proofStatus : null,
-          proofDecision: d.currentVersion ? d.currentVersion.proofDecision : null,
-          proofStatusDate: d.currentVersion ? d.currentVersion.proofStatusDate : null,
-          hasProof: !!(d.currentVersion && d.currentVersion.proofID),
-        }));
+        result.data = result.data
+          .map(d => ({
+            docID: d.ID,
+            name: d.name,
+            projectID: d.project ? d.project.ID : null,
+            projectName: d.project ? d.project.name : null,
+            lastUpdateDate: d.lastUpdateDate,
+            version: d.currentVersion ? d.currentVersion.version : null,
+            versionID: d.currentVersion ? d.currentVersion.ID : null,
+            versionEntryDate: d.currentVersion ? d.currentVersion.entryDate : null,
+            fileName: d.currentVersion ? d.currentVersion.fileName : null,
+            proofID: d.currentVersion ? d.currentVersion.proofID : null,
+            proofStatus: d.currentVersion ? d.currentVersion.proofStatus : null,
+            proofDecision: d.currentVersion ? d.currentVersion.proofDecision : null,
+            proofStatusDate: d.currentVersion ? d.currentVersion.proofStatusDate : null,
+            hasProof: !!(d.currentVersion && d.currentVersion.proofID),
+          }))
+          // Client-side: all query words must appear in the normalized project name.
+          .filter(d => {
+            if (!queryWords.length) return true;
+            const projNorm = normalize(d.projectName);
+            return queryWords.every(w => projNorm.includes(w));
+          });
       }
       return res.status(200).json(result);
     }
