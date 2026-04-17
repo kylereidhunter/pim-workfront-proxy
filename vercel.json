@@ -13,8 +13,5 @@
     { "source": "/upload-proof", "destination": "/api/index" },
     { "source": "/weekly-digest", "destination": "/api/index" },
     { "source": "/cron", "destination": "/api/index" }
-  ],
-  "crons": [
-    { "path": "/cron", "schedule": "0 * * * *" }
   ]
 }
