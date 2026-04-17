@@ -658,11 +658,28 @@ module.exports = async (req, res) => {
         fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Project Type,DE:Proof URL,owner:name,tasks:name,tasks:plannedCompletionDate',
         '$$LIMIT': '200',
       });
+      const personFilter = String(query.person || '').trim().toLowerCase();
+      const splitNames = (v) => {
+        if (v == null) return [];
+        if (Array.isArray(v)) return v.flatMap(splitNames);
+        if (typeof v !== 'string') return [String(v)];
+        return v.split(/[,/]/).map(s => s.trim()).filter(Boolean);
+      };
+      const matchesPerson = (proj) => {
+        if (!personFilter) return true;
+        const pool = [
+          ...splitNames(proj.designer),
+          ...splitNames(proj.copywriter),
+          ...splitNames(proj.pm),
+        ].map(s => s.toLowerCase());
+        return pool.some(n => n.includes(personFilter));
+      };
       const projects = (extractReviewDates(projRaw).data || [])
         .filter(p => {
           const d = parseWFDate(p[reviewField]);
           return d && d >= start && d <= end;
-        });
+        })
+        .filter(matchesPerson);
 
       // Step 2: fetch docs per project in parallel. Workfront's batch/nested
       // ID filters don't work reliably on docu/search, and ordering doesn't
@@ -767,6 +784,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({
         window: { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) },
         reviewType,
+        person: personFilter || null,
         total: analyzed.length,
         needsProofCount: analyzed.filter(p => p.needsProof).length,
         projects: analyzed,

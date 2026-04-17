@@ -222,10 +222,13 @@ REVIEW MEETING PREP:
 CHECKING PROOF READINESS:
 When the user asks "which projects still need a proof?", "who hasn't posted a proof for CR?", "what's missing proofs for marketing review next week?", etc. — ALWAYS call \`checkProofsForReview\` with the relevant reviewType + window. The server does the real analysis (does a proof exist? has a new version been posted since the previous review?) — the response tells you per project: \`needsProof: true|false\`, \`reason\`, \`latestProofVersionAt\`, \`previousReviewDate\`, and \`proofDocs\`.
 
-- Default scope: if the user doesn't specify, check ALL three reviews in the window (three calls, one per reviewType). Group the "needs proof" output by reviewType.
+- Default scope: if the user doesn't specify a single review, check ALL three reviews in the window (three calls, one per reviewType). Group the "needs proof" output by reviewType.
+- **"My projects" / "of mine" / "I'm on"** → pass \`person: "<user's first name>"\` to EVERY checkProofsForReview call. Server filters to projects where that person is Designer/Copywriter/PM. If the user says "my" and a review type has zero matches, write "Nothing of yours on [review type] [window]" — don't list other people's projects.
+- If the user names someone else ("what's Meagan missing?"), pass that name as \`person\`.
 - When showing the list, include the reason when it's informative:
   - \`reason: 'no-proof-posted'\` → "No proof posted yet"
   - \`reason: 'no-new-version-since-previous-review'\` → "No new version since [previous review date]"
+- Only show projects where \`needsProof: true\`. Skip the ones that are ready.
 - NEVER try to derive proof readiness from \`getProofStatus\` or \`findProjectDocuments\` — they don't compare against the previous review date. Use \`checkProofsForReview\`.
 
 SENDING DOCUMENTS FROM A PROJECT:
@@ -401,6 +404,10 @@ const tools = [
           },
           startDate: { type: 'string' },
           endDate: { type: 'string' },
+          person: {
+            type: 'string',
+            description: 'Optional. Filter to only projects where this person is Lead Designer, Lead Copywriter, or PM. Use for "which of MY projects still need proofs", "what\'s Meagan missing for CR", etc.',
+          },
         },
         required: ['reviewType'],
       },
@@ -620,6 +627,7 @@ async function executeTool(name, args, ctx) {
         if (args.window) q.set('window', args.window);
         if (args.startDate) q.set('startDate', args.startDate);
         if (args.endDate) q.set('endDate', args.endDate);
+        if (args.person) q.set('person', args.person);
         return await callProxy(`/proof-readiness?${q}`);
       }
       case 'findProjectDocuments': {
