@@ -22,6 +22,11 @@ const {
   setSubscription,
   getSubscriptionByName,
 } = require('./lib/subscriptions');
+const {
+  getHistory,
+  appendTurn,
+  clearHistory,
+} = require('./lib/conversation-history');
 
 // ---------- Bot Framework adapter ----------
 // Microsoft's recommended wiring: build the credentials factory from env vars,
@@ -87,6 +92,12 @@ PERSONALITY:
 - Fun, encouraging, slightly quirky. Like a supportive best friend who also has a spreadsheet open.
 - Use moderate emojis — 4-5 per message max, not one on every line. Think "sprinkle", not "parade".
 - Keep it warm and conversational. Short sentences. Real-person energy.
+
+CONVERSATION MEMORY:
+- Previous user + assistant messages in this chat appear before the current turn. Use them — when the user says "which of those", "the first one", "more on that", "what about Meagan's", etc., look at YOUR last reply to figure out what "those" refers to.
+- If your last reply listed 18 projects going to reviews, and the user asks "which still need proofs?", filter/call tools against THAT 18, not against all FY27.
+- If you genuinely can't tell what they're referring to, ask — don't guess.
+- If the user says "reset" / "new chat" / "start over", the conversation is already cleared before you see the message — you'll get a fresh turn.
 
 VARY YOUR OPENERS AND CLOSERS (hard rule — repetition is the biggest personality killer):
 - Never open two responses the same way in a row. "Hey [name]! Here's..." is banned as a default. Mix it up.
@@ -727,11 +738,22 @@ async function handlePimMessage(context) {
     `- Include projects from ALL channels (email, text/push, loyalty) unless they explicitly ask for one channel.\n` +
     `- When listing a project, the designer/copywriter/pm you show MUST be the literal value from that project's tool response. If null/empty, write "TBD". Never substitute the user's name.`;
 
+  // "reset" / "new chat" / "start over" — clear this conversation's memory.
+  const lower = userMessage.toLowerCase().trim();
+  if (lower === 'reset' || lower === 'new chat' || lower === 'start over' || lower === 'clear history' || lower === 'forget that') {
+    await clearHistory(conversationId);
+    await context.sendActivity('Cleared! Fresh start. 🧹 What do you need?');
+    return;
+  }
+
+  const history = await getHistory(conversationId);
+
   const messages = [
     {
       role: 'system',
       content: `${PIM_SYSTEM_PROMPT}\n\nToday's date: ${todayStr} (${dayName}).\nCurrent time in Central (America/Chicago): ${ctNowISO}. Use this exact offset when building runAt timestamps for scheduleOneTime.\n\n${userContext}`,
     },
+    ...history,
     { role: 'user', content: userMessage },
   ];
 
@@ -773,6 +795,7 @@ async function handlePimMessage(context) {
     // No more tool calls — send Pim's final reply
     const reply = msg.content || "Hmm, I'm drawing a blank on that one — can you rephrase?";
     await context.sendActivity(reply);
+    await appendTurn(conversationId, { userMessage, assistantMessage: reply });
     return;
   }
 
