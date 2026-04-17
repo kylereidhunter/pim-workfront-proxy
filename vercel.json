@@ -13,6 +13,8 @@
     { "source": "/upcoming-reviews", "destination": "/api/index" },
     { "source": "/reviews", "destination": "/api/index" },
     { "source": "/proof-readiness", "destination": "/api/index" },
+    { "source": "/workload", "destination": "/api/index" },
+    { "source": "/meeting-prep", "destination": "/api/index" },
     { "source": "/upload-proof", "destination": "/api/index" },
     { "source": "/weekly-digest", "destination": "/api/index" },
     { "source": "/cron", "destination": "/api/index" }

@@ -184,19 +184,28 @@ module.exports = async (req, res) => {
       const userQuery = String(query.name || 'FY27').trim();
       const normalize = (s) => String(s || '').toLowerCase().replace(/[_\-\s]+/g, ' ').trim();
       const queryWords = normalize(userQuery).split(' ').filter(Boolean);
-      // Use the longest raw (original-case) word for the Workfront server-side
-      // filter — Workfront's name_Mod=contains is case-sensitive, so we must
-      // Title-Case it. Client-side filter still uses the lowercase words.
       const rawWords = userQuery.replace(/[_\-]+/g, ' ').split(/\s+/).filter(Boolean);
       const longestRaw = rawWords.sort((a, b) => b.length - a.length)[0] || userQuery;
-      const titleCase = (w) => w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w;
-      const wfSearchWord = titleCase(longestRaw);
-      const result = await callWorkfront('docu/search', {
-        'project:name': wfSearchWord,
-        'project:name_Mod': 'contains',
-        fields: 'ID,name,lastUpdateDate,project:ID,project:name,currentVersion:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:proofDecision,currentVersion:proofStatusDate,currentVersion:fileName',
-        '$$LIMIT': '500',
-      });
+      // Workfront's name_Mod=contains is case-sensitive. Project names use a
+      // mix of all-caps tokens (FY27, WK17, ETP) and Title-Case words
+      // (Coffee_Table, Patriotic). Try the user's original case first — if
+      // nothing comes back, fall back to Title-Case so "coffee" still matches.
+      const searchCandidates = [];
+      searchCandidates.push(longestRaw);
+      const tc = longestRaw.charAt(0).toUpperCase() + longestRaw.slice(1).toLowerCase();
+      if (tc !== longestRaw) searchCandidates.push(tc);
+      const uc = longestRaw.toUpperCase();
+      if (uc !== longestRaw && uc !== tc) searchCandidates.push(uc);
+      let result;
+      for (const candidate of searchCandidates) {
+        result = await callWorkfront('docu/search', {
+          'project:name': candidate,
+          'project:name_Mod': 'contains',
+          fields: 'ID,name,lastUpdateDate,project:ID,project:name,currentVersion:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:proofDecision,currentVersion:proofStatusDate,currentVersion:fileName',
+          '$$LIMIT': '500',
+        });
+        if (result && result.data && result.data.length) break;
+      }
       if (result.data) {
         result.data = result.data
           .map(d => ({
@@ -375,6 +384,200 @@ module.exports = async (req, res) => {
       });
     }
 
+    // GET /workload?person=Meagan&window=nextweek
+    // Or /workload?window=nextweek (no person = aggregated per-person leaderboard)
+    // Counts projects per person where they're designer, copywriter, or pm
+    // AND a review date falls in the window.
+    else if (path === '/workload' || path === '/workload/') {
+      const [start, end] = resolveWindow(query.window || 'nextweek', query.startDate, query.endDate);
+      if (!start || !end) return res.status(400).json({ error: 'Provide window or startDate+endDate' });
+      const projRaw = await callWorkfront('proj/search', {
+        name: query.name || 'FY27',
+        name_Mod: 'contains',
+        status: 'CUR',
+        fields: 'name,status,DE:Lead Designer,DE:Lead Copywriter,DE:Channel,DE:Project Type,DE:Live Date,DE:Fiscal Weeks,owner:name,tasks:name,tasks:plannedCompletionDate',
+        '$$LIMIT': '200',
+      });
+      const projects = (extractReviewDates(projRaw).data || [])
+        .filter(p => ['creativeReviewDate', 'marketingReviewDate', 'execReviewDate'].some(f => {
+          const d = parseWFDate(p[f]);
+          return d && d >= start && d <= end;
+        }));
+      const personQuery = String(query.person || '').trim().toLowerCase();
+      const tally = new Map();
+      const projectsByPerson = new Map();
+      for (const p of projects) {
+        const roles = [
+          { role: 'designer', name: p.designer },
+          { role: 'copywriter', name: p.copywriter },
+          { role: 'pm', name: p.pm },
+        ];
+        for (const { role, name } of roles) {
+          if (!name) continue;
+          const key = name.toLowerCase();
+          const entry = tally.get(key) || { name, designer: 0, copywriter: 0, pm: 0, total: 0 };
+          entry[role]++;
+          entry.total++;
+          tally.set(key, entry);
+          const arr = projectsByPerson.get(key) || [];
+          arr.push({
+            projectID: p.ID,
+            projectName: p.name,
+            projectUrl: p.projectUrl,
+            role,
+            creativeReviewDate: p.creativeReviewDate,
+            marketingReviewDate: p.marketingReviewDate,
+            execReviewDate: p.execReviewDate,
+          });
+          projectsByPerson.set(key, arr);
+        }
+      }
+      if (personQuery) {
+        // Find by substring match on name
+        const matchKey = [...tally.keys()].find(k => k.includes(personQuery));
+        if (!matchKey) return res.status(200).json({ person: query.person, found: false, total: 0, projects: [] });
+        const entry = tally.get(matchKey);
+        return res.status(200).json({
+          person: entry.name,
+          window: { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) },
+          designer: entry.designer,
+          copywriter: entry.copywriter,
+          pm: entry.pm,
+          total: entry.total,
+          projects: projectsByPerson.get(matchKey),
+        });
+      }
+      // Aggregate leaderboard
+      const leaderboard = [...tally.values()].sort((a, b) => b.total - a.total);
+      return res.status(200).json({
+        window: { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) },
+        totalPeople: leaderboard.length,
+        leaderboard,
+      });
+    }
+
+    // GET /meeting-prep?reviewType=creative&window=thisweek
+    // Per-project prep data for a specific review: name, assignees, latest
+    // proof version, latest comment, channel, live date, fiscal week.
+    else if (path === '/meeting-prep' || path === '/meeting-prep/') {
+      const reviewType = (query.reviewType || 'creative').toLowerCase();
+      const typeToField = {
+        creative: 'creativeReviewDate',
+        marketing: 'marketingReviewDate',
+        mkt: 'marketingReviewDate',
+        exec: 'execReviewDate',
+      };
+      const reviewField = typeToField[reviewType];
+      if (!reviewField) return res.status(400).json({ error: 'reviewType must be creative|marketing|exec' });
+      const [start, end] = resolveWindow(query.window || 'thisweek', query.startDate, query.endDate);
+      if (!start || !end) return res.status(400).json({ error: 'Provide window or startDate+endDate' });
+
+      const projRaw = await callWorkfront('proj/search', {
+        name: query.name || 'FY27',
+        name_Mod: 'contains',
+        status: 'CUR',
+        fields: 'name,status,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Project Type,owner:name,tasks:name,tasks:plannedCompletionDate',
+        '$$LIMIT': '200',
+      });
+      const projects = (extractReviewDates(projRaw).data || [])
+        .filter(p => {
+          const d = parseWFDate(p[reviewField]);
+          return d && d >= start && d <= end;
+        });
+
+      // Fetch all FY27 docs once; group by project
+      const docSearch = String(query.name || 'FY27').trim();
+      const mpCandidates = [docSearch, docSearch.charAt(0).toUpperCase() + docSearch.slice(1).toLowerCase(), docSearch.toUpperCase()];
+      let docRaw;
+      for (const c of [...new Set(mpCandidates)]) {
+        docRaw = await callWorkfront('docu/search', {
+          'project:name': c,
+          'project:name_Mod': 'contains',
+          fields: 'ID,name,project:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus',
+          '$$LIMIT': '500',
+        });
+        if (docRaw && docRaw.data && docRaw.data.length) break;
+      }
+      const docsByProject = new Map();
+      (docRaw && docRaw.data || []).forEach(d => {
+        const pid = d.project && d.project.ID;
+        if (!pid) return;
+        const arr = docsByProject.get(pid) || [];
+        arr.push({
+          docID: d.ID,
+          name: d.name,
+          version: d.currentVersion ? d.currentVersion.version : null,
+          entryDate: d.currentVersion ? d.currentVersion.entryDate : null,
+          hasProof: !!(d.currentVersion && d.currentVersion.proofID),
+          proofStatus: d.currentVersion ? d.currentVersion.proofStatus : null,
+        });
+        docsByProject.set(pid, arr);
+      });
+
+      // Fetch recent notes in last 14 days for these projects
+      const since = new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const noteRaw = await callWorkfront('note/search', {
+        objCode: 'PROJ',
+        objID: projects.map(p => p.ID).join(','),
+        objID_Mod: 'in',
+        entryDate: since,
+        entryDate_Mod: 'gte',
+        fields: 'ID,entryDate,objID,owner:name,noteText',
+        '$$LIMIT': '300',
+      });
+      const notesByProject = new Map();
+      (noteRaw.data || []).forEach(n => {
+        if (!n.objID) return;
+        const arr = notesByProject.get(n.objID) || [];
+        arr.push({
+          entryDate: n.entryDate,
+          ownerName: n.owner ? n.owner.name : null,
+          text: n.noteText || '',
+        });
+        notesByProject.set(n.objID, arr);
+      });
+
+      const preps = projects.map(p => {
+        const docs = (docsByProject.get(p.ID) || []).filter(d => d.hasProof);
+        const latestProof = docs
+          .slice()
+          .sort((a, b) => {
+            const at = parseWFDate(a.entryDate);
+            const bt = parseWFDate(b.entryDate);
+            return (bt ? bt.getTime() : 0) - (at ? at.getTime() : 0);
+          })[0] || null;
+        const notes = (notesByProject.get(p.ID) || [])
+          .slice()
+          .sort((a, b) => {
+            const at = parseWFDate(a.entryDate);
+            const bt = parseWFDate(b.entryDate);
+            return (bt ? bt.getTime() : 0) - (at ? at.getTime() : 0);
+          });
+        const lastNote = notes[0] || null;
+        return {
+          projectID: p.ID,
+          projectName: p.name,
+          projectUrl: p.projectUrl,
+          designer: p.designer,
+          copywriter: p.copywriter,
+          pm: p.pm,
+          channel: p.channel,
+          liveDate: p.liveDate,
+          fiscalWeek: p.fiscalWeek,
+          reviewDate: p[reviewField],
+          latestProof,
+          lastComment: lastNote,
+        };
+      });
+
+      return res.status(200).json({
+        reviewType,
+        window: { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) },
+        count: preps.length,
+        projects: preps,
+      });
+    }
+
     // GET /proof-readiness?reviewType=creative|marketing|exec&window=nextweek
     // For each project in the window for the given review type, returns
     // whether a proof exists / has been updated since the previous review.
@@ -413,14 +616,25 @@ module.exports = async (req, res) => {
           return d && d >= start && d <= end;
         });
 
-      // Step 2: get all docs for those projects in one shot
-      // Fetch all FY27 docs (up to 500) and filter to our project IDs.
-      const docRaw = await callWorkfront('docu/search', {
-        'project:name': query.name || 'FY27',
-        'project:name_Mod': 'contains',
-        fields: 'ID,name,project:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
-        '$$LIMIT': '500',
-      });
+      // Step 2: get all docs for those projects in one shot.
+      // Workfront's contains is case-sensitive. Try the raw query first,
+      // then Title-Case, then UPPER-CASE so "fy27"/"FY27"/"Fy27" all work.
+      const docSearch = String(query.name || 'FY27').trim();
+      const docCandidates = [docSearch];
+      const docTC = docSearch.charAt(0).toUpperCase() + docSearch.slice(1).toLowerCase();
+      if (docTC !== docSearch) docCandidates.push(docTC);
+      const docUC = docSearch.toUpperCase();
+      if (docUC !== docSearch && docUC !== docTC) docCandidates.push(docUC);
+      let docRaw;
+      for (const c of docCandidates) {
+        docRaw = await callWorkfront('docu/search', {
+          'project:name': c,
+          'project:name_Mod': 'contains',
+          fields: 'ID,name,project:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
+          '$$LIMIT': '500',
+        });
+        if (docRaw && docRaw.data && docRaw.data.length) break;
+      }
       const docsByProject = new Map();
       (docRaw.data || []).forEach(d => {
         const pid = d.project && d.project.ID;

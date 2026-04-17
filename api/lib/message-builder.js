@@ -118,10 +118,39 @@ async function buildWeeklyReviewsDigest({ window = 'nextweek' } = {}) {
   return header + sections.join('\n') + footer;
 }
 
+async function buildProofDueCountdown({ reviewType = 'creative', when = 'tomorrow' } = {}) {
+  // Fetch proof readiness for the given review window.
+  // Default: CR proofs due today, review tomorrow.
+  const windowParam = when === 'today' ? 'thisweek' : 'thisweek';
+  const r = await fetchJSON(`/proof-readiness?reviewType=${reviewType}&window=${windowParam}`);
+  if (!r.total) {
+    return `☑️ No ${reviewType === 'creative' ? 'Creative' : reviewType === 'marketing' ? 'Marketing' : 'Exec'} Review scheduled for ${when}. Enjoy the breather!`;
+  }
+  const reviewLabel = { creative: 'Creative Review', marketing: 'MKT Review', exec: 'Exec Review' }[reviewType] || 'Review';
+  const dueBy = { creative: 'Mon 3pm', marketing: 'Tue 1pm', exec: 'Wed 1pm' }[reviewType] || 'soon';
+  const missing = (r.projects || []).filter(p => p.needsProof);
+  const posted = r.total - missing.length;
+  let msg = `⏰ **${reviewLabel} proofs due ${dueBy}** — ${posted} of ${r.total} posted.\n`;
+  if (missing.length === 0) {
+    msg += `All caught up! 🎉`;
+  } else {
+    msg += `\nStill missing:\n`;
+    missing.forEach(p => {
+      const sn = shortName(p.projectName);
+      const who = p.designer || 'TBD';
+      const url = p.projectUrl ? ` — [Open](${p.projectUrl})` : '';
+      msg += `- **${sn}** — ${who}${url}\n`;
+    });
+  }
+  return msg;
+}
+
 async function buildMessage(kind, args) {
   switch (kind) {
     case 'weekly-reviews-digest':
       return buildWeeklyReviewsDigest(args || {});
+    case 'proof-due-countdown':
+      return buildProofDueCountdown(args || {});
     case 'reminder-text':
       return args && args.text ? args.text : '⏰ Reminder!';
     default:

@@ -216,6 +216,17 @@ REVIEW SCHEDULE REFERENCE (typical):
 - Exec Review: Thursday. Proofs + JPEGs due 1 PM Wednesday.
 (Always use actual dates from Workfront — this is just a sanity check.)
 
+WORKLOAD QUESTIONS:
+- "What's [person]'s load next week?" / "is [person] slammed?" → \`getWorkload({person: 'Meagan', window: 'nextweek'})\`. Show their total count, role breakdown, and list their projects.
+- "Who's got the most this week?" / "who's slammed?" / "workload rundown" → \`getWorkload({window: 'thisweek'})\` (no person). Show the leaderboard, top 5-8 people.
+- When showing a personal load, lead with the total ("You've got 7 projects going to reviews next week") and break down by role and dates.
+
+REVIEW MEETING PREP:
+- "Prep me for Tuesday's CR" / "summarize Wednesday's MKT" / "what do I need for exec review next week?" → \`getMeetingPrep({reviewType, window})\`.
+- For each returned project, write ONE paragraph (3-5 lines): project name + channel, who's on it, latest proof version (or "no proof yet"), last comment from the Updates tab (if there is one — use the \`lastComment\` field, quote a short snippet), live date.
+- If there are more than 6 projects, use short paragraphs. Don't skip any.
+- If a project has no recent comments, say so (not worth padding with fake detail).
+
 CHECKING PROOF READINESS:
 When the user asks "which projects still need a proof?", "who hasn't posted a proof for CR?", "what's missing proofs for marketing review next week?", etc. — ALWAYS call \`checkProofsForReview\` with the relevant reviewType + window. The server does the real analysis (does a proof exist? has a new version been posted since the previous review?) — the response tells you per project: \`needsProof: true|false\`, \`reason\`, \`latestProofVersionAt\`, \`previousReviewDate\`, and \`proofDocs\`.
 
@@ -276,6 +287,7 @@ You can post to "this chat" on a schedule. All times are Central Time (America/C
 
 - Message kinds available:
   - \`weekly-reviews-digest\` with args \`{ window: "nextweek" }\` or \`{ window: "thisweek" }\` → posts the full CR/MKT/Exec review lineup.
+  - \`proof-due-countdown\` with args \`{ reviewType: "creative"|"marketing"|"exec", when: "tomorrow" }\` → posts "X of Y proofs posted, missing …". Common setup: **Monday 10 AM Creative Review proof-due countdown** = cron "0 10 * * 1" with args \`{reviewType:"creative", when:"tomorrow"}\`. Do the same for MKT (Tue 10 AM) and Exec (Wed 10 AM) if the user asks for all three.
   - \`reminder-text\` with args \`{ text: "..." }\` → posts a plain text reminder.
 
 When the user says "in this chat" or doesn't specify — always schedule to THE CURRENT conversation. The tool does that automatically; you don't pass a conversationId.
@@ -345,6 +357,35 @@ const tools = [
           name: { type: 'string', description: 'Project name to search (e.g. WK15, Patriotic)' },
         },
         required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'getWorkload',
+      description: 'Returns how many projects a person is on (designer/copywriter/pm) for a given window, OR a leaderboard across the whole team. Use for "what\'s Meagan\'s load next week?", "who\'s got the most this week?", "is Kyle slammed?", "show me the workload for next week".',
+      parameters: {
+        type: 'object',
+        properties: {
+          person: { type: 'string', description: 'Optional person name (partial match, case-insensitive). Omit for team-wide leaderboard.' },
+          window: { type: 'string', enum: ['thisweek', 'nextweek', 'last7', 'next7', 'thismonth'] },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'getMeetingPrep',
+      description: 'Returns one-paragraph prep data for each project going to a specific review in a window: name, assignees, channel, live date, latest proof version, last comment from the Updates tab. Use for "prep me for Tuesday\'s CR", "summarize Wednesday\'s MKT review", "what do I need to know for exec review this week?".',
+      parameters: {
+        type: 'object',
+        properties: {
+          reviewType: { type: 'string', enum: ['creative', 'marketing', 'exec'] },
+          window: { type: 'string', enum: ['thisweek', 'nextweek', 'last7', 'next7', 'thismonth'] },
+        },
+        required: ['reviewType'],
       },
     },
   },
@@ -451,12 +492,12 @@ const tools = [
           },
           messageKind: {
             type: 'string',
-            enum: ['weekly-reviews-digest', 'reminder-text'],
-            description: 'weekly-reviews-digest = full list of projects in CR/MKT/Exec review in the given window. reminder-text = post a plain text reminder.',
+            enum: ['weekly-reviews-digest', 'proof-due-countdown', 'reminder-text'],
+            description: 'weekly-reviews-digest = full list of projects in CR/MKT/Exec review in the given window. proof-due-countdown = "X of Y proofs posted, missing: …" for a specific review type. reminder-text = post a plain text reminder.',
           },
           messageArgs: {
             type: 'object',
-            description: 'Args for the message. For weekly-reviews-digest: { window: "nextweek" | "thisweek" }. For reminder-text: { text: "..." }.',
+            description: 'Args. weekly-reviews-digest: { window: "nextweek" | "thisweek" }. proof-due-countdown: { reviewType: "creative"|"marketing"|"exec", when: "tomorrow" }. reminder-text: { text: "..." }.',
           },
           description: {
             type: 'string',
@@ -565,6 +606,18 @@ async function executeTool(name, args, ctx) {
         return await callProxy(`/tasks?projectId=${encodeURIComponent(args.projectId)}`);
       case 'getProofStatus':
         return await callProxy(`/proofs?name=${encodeURIComponent(args.name)}`);
+      case 'getWorkload': {
+        const q = new URLSearchParams();
+        if (args.person) q.set('person', args.person);
+        if (args.window) q.set('window', args.window);
+        return await callProxy(`/workload?${q}`);
+      }
+      case 'getMeetingPrep': {
+        const q = new URLSearchParams();
+        q.set('reviewType', args.reviewType);
+        if (args.window) q.set('window', args.window);
+        return await callProxy(`/meeting-prep?${q}`);
+      }
       case 'checkProofsForReview': {
         const q = new URLSearchParams();
         q.set('reviewType', args.reviewType);
