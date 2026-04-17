@@ -391,11 +391,31 @@ module.exports = async (req, res) => {
         if (channel === 'loyalty') return type.includes('loyalty') || name.includes('loyalty');
         return true;
       };
-      const filtered = (extracted.data || []).filter(p => matchesWindow(p) && matchesChannel(p));
+      // Optional person filter — matches when the person's first or full
+      // name appears in designer / copywriter / pm. Comma-separated
+      // multi-assignee fields are split before matching.
+      const personFilter = String(query.person || '').trim().toLowerCase();
+      const splitNames = (v) => {
+        if (v == null) return [];
+        if (Array.isArray(v)) return v.flatMap(splitNames);
+        if (typeof v !== 'string') return [String(v)];
+        return v.split(/[,/]/).map(s => s.trim()).filter(Boolean);
+      };
+      const matchesPerson = (proj) => {
+        if (!personFilter) return true;
+        const pool = [
+          ...splitNames(proj.designer),
+          ...splitNames(proj.copywriter),
+          ...splitNames(proj.pm),
+        ].map(s => s.toLowerCase());
+        return pool.some(n => n.includes(personFilter));
+      };
+      const filtered = (extracted.data || []).filter(p => matchesWindow(p) && matchesChannel(p) && matchesPerson(p));
       return res.status(200).json({
         window: { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) },
         reviewType,
         channel,
+        person: personFilter || null,
         count: filtered.length,
         projects: filtered,
       });

@@ -140,20 +140,12 @@ If a project has a review date in the requested window, include it regardless of
 
 HOW TO FIND REVIEWS FOR A DATE RANGE:
 
-**DEFAULT BEHAVIOR (read this carefully):**
-If the user asks about "reviews" / "what's going to review" / "what's going through review" / "what's up for review" / "what's in review" WITHOUT specifying a review type (Creative vs MKT vs Exec) AND WITHOUT specifying a person, your default is: **show EVERYTHING across all three reviews**. This is mandatory — do NOT summarize, do NOT pick a subset, do NOT ask a clarifying question first. Call \`getReviewsInWindow\` THREE TIMES (one for each reviewType: creative, marketing, exec) and present all three sections with every project returned. If a review has 19 projects, list all 19. Total response may be 30+ projects — that's expected, show them all.
-
-Example triggers that should fire this full-everything behavior:
-- "what's going to reviews next week"
-- "send me what's going to reviews next week"
-- "what's in review this week"
-- "reviews for next week"
-- "review schedule for next week"
-
-**ONLY narrow the scope when the user explicitly names it:**
-- Named review type ("Creative Review", "CR", "MKT Review", "MR", "Exec Review", "ER") → one getReviewsInWindow call for that type only.
-- Named person ("what's Meagan on in review?", "my projects going to review") → still call all three, but filter the results client-side to that person's name.
-- Named channel ("email reviews", "text/push next week") → pass the channel arg.
+**SCOPE — narrow by what the user specified:**
+- No review type named + no person named + no channel → call all three reviewTypes (creative, marketing, exec) separately, show every project in each. Triggers: "what's going to reviews next week", "review schedule for next week".
+- Named review type only → one call for that reviewType.
+- "My / mine" or named person → pass \`person\` to narrow to projects where that name is in Designer/Copywriter/PM. If zero match, say so — don't list other people's projects.
+- Named channel → pass \`channel\`.
+- Combine any of the above as needed (e.g. "what do I have on MKT review this week" = reviewType: marketing + person: user's first name).
 
 **Arguments:**
 - Window: "this week" → window=thisweek ; "next week" → window=nextweek ; "this month" → window=thismonth ; "next 7 days" → window=next7 ; "past week" → window=last7. Specific dates → startDate=YYYY-MM-DD + endDate=YYYY-MM-DD.
@@ -473,6 +465,10 @@ const tools = [
             enum: ['email', 'text-push', 'loyalty', 'all'],
             description: 'Filter by channel. Default all — includes email, text/push, and loyalty.',
           },
+          person: {
+            type: 'string',
+            description: 'Optional. Filter results to only projects where this person (by first name, full name, or substring) is the Lead Designer, Lead Copywriter, or PM. Use this when the user asks "what do I have going to review", "what does Meagan have", "which ones is Charito on", etc.',
+          },
         },
         required: ['reviewType'],
       },
@@ -664,6 +660,7 @@ async function executeTool(name, args, ctx) {
         if (args.startDate) q.set('startDate', args.startDate);
         if (args.endDate) q.set('endDate', args.endDate);
         if (args.channel) q.set('channel', args.channel);
+        if (args.person) q.set('person', args.person);
         return await callProxy(`/reviews?${q}`);
       }
       case 'scheduleRecurring': {
@@ -827,11 +824,13 @@ async function handlePimMessage(context) {
     (fromEmail ? `, email/id ${fromEmail}` : '') + '.\n' +
     `Greet THEM by name — use "${firstName || fromName || 'there'}", not any example name from the prompt. Kyle is NOT the user unless the sender above is literally Kyle.\n` +
     `When they say "I", "me", "my", or "mine", it refers to ${fromName || 'that person'} — whoever is messaging right now, regardless of who it is.\n\n` +
-    `"MY PROJECTS" DEFINITION:\n` +
-    `- "My projects" / "projects I'm on" / "projects I have" means ALL FY27 projects in the team's pipeline — not filtered by assignee. The user oversees the whole FY27 workstream, so every FY27 project counts as "theirs".\n` +
-    `- Do NOT try to filter projects by matching the user's name against designer/copywriter/pm. Return everything the tool gave you that fits the date/review/channel criteria they asked about.\n` +
-    `- Include projects from ALL channels (email, text/push, loyalty) unless they explicitly ask for one channel.\n` +
-    `- When listing a project, the designer/copywriter/pm you show MUST be the literal value from that project's tool response. If null/empty, write "TBD". Never substitute the user's name.`;
+    `"MY / MINE" DEFINITION:\n` +
+    `- "What do I have going to [review]?", "my projects in review", "what's mine this week", "projects I'm on" → call the relevant tool with \`person: "${firstName || fromName}"\`. The server filters to projects where that name appears in DE:Lead Designer, DE:Lead Copywriter, or pm. Multi-assignee fields like "Alise Gray, Ryan Creery" are split before matching.\n` +
+    `- "What's going to [review]?", "everything in review", "all reviews", "team reviews" (no "I/my") → do NOT pass person; return the full team-wide list.\n` +
+    `- If the user asks about someone else by name ("what's Meagan on?"), pass that name as \`person\`.\n` +
+    `- If a tool returns zero results for a "my" query, say plainly "You're not on anything going to [review] [window]." Do NOT fall back to listing other people's projects.\n` +
+    `- Designer / copywriter / pm shown in the output MUST be the literal value from the tool response. If null/empty, write "TBD". Never substitute the user's name or guess.\n` +
+    `- Include projects from ALL channels (email, text/push, loyalty) unless they explicitly ask for one channel.`;
 
   // "reset" / "new chat" / "start over" — clear this conversation's memory.
   const lower = userMessage.toLowerCase().trim();
