@@ -532,18 +532,23 @@ module.exports = async (req, res) => {
           return d && d >= start && d <= end;
         });
 
-      // Fetch docs for the window's projects via docObjCode/objID (the direct
-      // parent relation — more reliable than filtering on project:ID).
-      const projIdList = projects.map(p => p.ID).filter(Boolean);
-      const docRaw = projIdList.length
+      // Fetch the 500 most-recently-updated FY27 docs (Workfront's nested
+      // project:ID filter doesn't reliably work), then keep only the ones
+      // belonging to our window's projects.
+      const projIdSet = new Set(projects.map(p => p.ID).filter(Boolean));
+      const docRaw = projIdSet.size
         ? await callWorkfront('docu/search', {
-            docObjCode: 'PROJ',
-            objID: projIdList.join(','),
-            objID_Mod: 'in',
-            fields: 'ID,name,objID,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus',
+            'project:name': 'FY27',
+            'project:name_Mod': 'contains',
+            '$$ORDER_BY': 'lastUpdateDate',
+            '$$ORDER_DIRECTION': 'desc',
+            fields: 'ID,name,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus',
             '$$LIMIT': '500',
           })
         : { data: [] };
+      if (docRaw && docRaw.data) {
+        docRaw.data = docRaw.data.filter(d => d.project && projIdSet.has(d.project.ID));
+      }
       const docsByProject = new Map();
       (docRaw && docRaw.data || []).forEach(d => {
         const pid = d.project && d.project.ID;
@@ -662,19 +667,27 @@ module.exports = async (req, res) => {
           return d && d >= start && d <= end;
         });
 
-      // Step 2: fetch docs for these projects via the direct parent relation
-      // (docs have docObjCode=PROJ + objID=<project ID>). Using
-      // project:ID_Mod=in didn't filter correctly at the nested level.
-      const projIdList = projects.map(p => p.ID).filter(Boolean);
-      const docRaw = projIdList.length
+      // Step 2: fetch the 500 most-recently-updated FY27 documents.
+      // Neither project:ID_Mod=in nor docObjCode+objID_Mod=in filters
+      // reliably at Workfront's nested level, so we pull the newest 500
+      // docs on FY27 projects (sorted desc by lastUpdateDate) and match
+      // to our project list client-side. 500 easily covers a week's
+      // worth of active projects.
+      const projIdSet = new Set(projects.map(p => p.ID).filter(Boolean));
+      const docRaw = projIdSet.size
         ? await callWorkfront('docu/search', {
-            docObjCode: 'PROJ',
-            objID: projIdList.join(','),
-            objID_Mod: 'in',
-            fields: 'ID,name,objID,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
+            'project:name': 'FY27',
+            'project:name_Mod': 'contains',
+            '$$ORDER_BY': 'lastUpdateDate',
+            '$$ORDER_DIRECTION': 'desc',
+            fields: 'ID,name,lastUpdateDate,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
             '$$LIMIT': '500',
           })
         : { data: [] };
+      // Keep only docs whose project is in our target set
+      if (docRaw && docRaw.data) {
+        docRaw.data = docRaw.data.filter(d => d.project && projIdSet.has(d.project.ID));
+      }
       const docsByProject = new Map();
       (docRaw && docRaw.data || []).forEach(d => {
         // Use objID (parent project ID) which is the reliable key — project.ID
