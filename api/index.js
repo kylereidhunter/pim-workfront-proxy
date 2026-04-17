@@ -172,6 +172,79 @@ module.exports = async (req, res) => {
       return res.status(200).json(result);
     }
 
+    // GET /docs?name=FY27 — all documents on matching projects, with current
+    // version + proof info. Used by the change detector to diff new uploads,
+    // version bumps, and proof status changes.
+    else if (path === '/docs' || path === '/docs/') {
+      const result = await callWorkfront('docu/search', {
+        'project:name': query.name || 'FY27',
+        'project:name_Mod': 'contains',
+        fields: 'ID,name,lastUpdateDate,project:ID,project:name,currentVersion:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:proofDecision,currentVersion:proofStatusDate,currentVersion:fileName',
+        '$$LIMIT': '500',
+      });
+      if (result.data) {
+        result.data = result.data.map(d => ({
+          docID: d.ID,
+          name: d.name,
+          projectID: d.project ? d.project.ID : null,
+          projectName: d.project ? d.project.name : null,
+          lastUpdateDate: d.lastUpdateDate,
+          version: d.currentVersion ? d.currentVersion.version : null,
+          versionID: d.currentVersion ? d.currentVersion.ID : null,
+          versionEntryDate: d.currentVersion ? d.currentVersion.entryDate : null,
+          fileName: d.currentVersion ? d.currentVersion.fileName : null,
+          proofID: d.currentVersion ? d.currentVersion.proofID : null,
+          proofStatus: d.currentVersion ? d.currentVersion.proofStatus : null,
+          proofDecision: d.currentVersion ? d.currentVersion.proofDecision : null,
+          proofStatusDate: d.currentVersion ? d.currentVersion.proofStatusDate : null,
+          hasProof: !!(d.currentVersion && d.currentVersion.proofID),
+        }));
+      }
+      return res.status(200).json(result);
+    }
+
+    // GET /updates?name=FY27&sinceHours=24 — journal notes on matching
+    // projects' Updates tab. Default window: last 24 hours.
+    else if (path === '/updates' || path === '/updates/') {
+      const sinceHours = Math.max(1, Math.min(168, Number(query.sinceHours) || 24));
+      const since = new Date(Date.now() - sinceHours * 3600 * 1000).toISOString().slice(0, 10);
+      const result = await callWorkfront('note/search', {
+        objCode: 'PROJ',
+        entryDate: since,
+        entryDate_Mod: 'gte',
+        fields: 'ID,entryDate,objID,ownerID,owner:name,noteText',
+        '$$LIMIT': '500',
+      });
+      // Filter client-side to only notes whose project matches the name query.
+      // Workfront's note/search won't filter by project name directly.
+      if (result.data && query.name) {
+        const nameFilter = String(query.name).toLowerCase();
+        // Need project names for each note's objID. Do a batched proj lookup.
+        const objIds = [...new Set(result.data.map(n => n.objID).filter(Boolean))];
+        const projectLookup = {};
+        if (objIds.length) {
+          const projResult = await callWorkfront('proj/search', {
+            ID: objIds.join(','),
+            ID_Mod: 'in',
+            fields: 'ID,name',
+            '$$LIMIT': String(objIds.length + 10),
+          });
+          (projResult.data || []).forEach(p => { projectLookup[p.ID] = p.name; });
+        }
+        result.data = result.data
+          .map(n => ({
+            noteID: n.ID,
+            entryDate: n.entryDate,
+            projectID: n.objID,
+            projectName: projectLookup[n.objID] || null,
+            ownerName: n.owner ? n.owner.name : null,
+            text: n.noteText || '',
+          }))
+          .filter(n => n.projectName && n.projectName.toLowerCase().includes(nameFilter));
+      }
+      return res.status(200).json(result);
+    }
+
     // GET /proofs?name=WK15
     else if (path === '/proofs' || path === '/proofs/') {
       const result = await callWorkfront('docu/search', {

@@ -7,6 +7,8 @@
     { "source": "/project/:id", "destination": "/api/index" },
     { "source": "/tasks", "destination": "/api/index" },
     { "source": "/proofs", "destination": "/api/index" },
+    { "source": "/docs", "destination": "/api/index" },
+    { "source": "/updates", "destination": "/api/index" },
     { "source": "/my-projects", "destination": "/api/index" },
     { "source": "/upcoming-reviews", "destination": "/api/index" },
     { "source": "/reviews", "destination": "/api/index" },
