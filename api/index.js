@@ -54,6 +54,19 @@ function parseWFDate(s) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// Format a Workfront date as "Tue 4/21" in Central Time. Returns null if
+// the date is missing or unparsable.
+function formatReviewDateLabel(s) {
+  const d = parseWFDate(s);
+  if (!d) return null;
+  return d.toLocaleDateString('en-US', {
+    timeZone: 'America/Chicago',
+    weekday: 'short',
+    month: 'numeric',
+    day: 'numeric',
+  });
+}
+
 // Resolve a window keyword to a [start, end] date range (inclusive).
 function resolveWindow(window, startDate, endDate) {
   if (startDate && endDate) {
@@ -103,6 +116,14 @@ function extractReviewDates(result) {
       proofUrl: proj['DE:Proof URL'] || null,
       projectUrl: projectUrlFor(proj.ID),
     };
+    // Pre-format "Tue 4/21" style labels so the LLM never has to compute
+    // day-of-week from a raw date (it gets them wrong).
+    const addLabels = () => {
+      out.creativeReviewDateLabel = formatReviewDateLabel(out.creativeReviewDate);
+      out.marketingReviewDateLabel = formatReviewDateLabel(out.marketingReviewDate);
+      out.execReviewDateLabel = formatReviewDateLabel(out.execReviewDate);
+      out.liveDateLabel = formatReviewDateLabel(out.liveDate);
+    };
     (proj.tasks || []).forEach(t => {
       const n = (t.name || '').toLowerCase();
       // HARD SKIP any edit / internal-review / revision phase tasks.
@@ -139,6 +160,7 @@ function extractReviewDates(result) {
         out.deliverDate = t.plannedCompletionDate;
       }
     });
+    addLabels();
     return out;
   });
   return result;
