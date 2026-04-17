@@ -375,6 +375,145 @@ module.exports = async (req, res) => {
       });
     }
 
+    // GET /proof-readiness?reviewType=creative|marketing|exec&window=nextweek
+    // For each project in the window for the given review type, returns
+    // whether a proof exists / has been updated since the previous review.
+    //
+    // Logic:
+    //   - CR (first review): needs proof if NO document has hasProof:true.
+    //   - MKT: needs proof if no proof version uploaded AFTER the CR date.
+    //   - Exec: needs proof if no proof version uploaded AFTER the MKT date.
+    //
+    // Returns { window, reviewType, count, projects:[{..., needsProof, reason,
+    // latestProofVersionAt, previousReviewDate, proofs:[...]}]}
+    else if (path === '/proof-readiness' || path === '/proof-readiness/') {
+      const reviewType = (query.reviewType || 'creative').toLowerCase();
+      const typeToField = {
+        creative: 'creativeReviewDate',
+        marketing: 'marketingReviewDate',
+        mkt: 'marketingReviewDate',
+        exec: 'execReviewDate',
+      };
+      const reviewField = typeToField[reviewType];
+      if (!reviewField) return res.status(400).json({ error: 'reviewType must be creative|marketing|exec' });
+      const [start, end] = resolveWindow(query.window, query.startDate, query.endDate);
+      if (!start || !end) return res.status(400).json({ error: 'Provide window or startDate+endDate' });
+
+      // Step 1: get projects in window
+      const projRaw = await callWorkfront('proj/search', {
+        name: query.name || 'FY27',
+        name_Mod: 'contains',
+        status: 'CUR',
+        fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Project Type,DE:Proof URL,owner:name,tasks:name,tasks:plannedCompletionDate',
+        '$$LIMIT': '200',
+      });
+      const projects = (extractReviewDates(projRaw).data || [])
+        .filter(p => {
+          const d = parseWFDate(p[reviewField]);
+          return d && d >= start && d <= end;
+        });
+
+      // Step 2: get all docs for those projects in one shot
+      // Fetch all FY27 docs (up to 500) and filter to our project IDs.
+      const docRaw = await callWorkfront('docu/search', {
+        'project:name': query.name || 'FY27',
+        'project:name_Mod': 'contains',
+        fields: 'ID,name,project:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
+        '$$LIMIT': '500',
+      });
+      const docsByProject = new Map();
+      (docRaw.data || []).forEach(d => {
+        const pid = d.project && d.project.ID;
+        if (!pid) return;
+        const arr = docsByProject.get(pid) || [];
+        arr.push({
+          docID: d.ID,
+          name: d.name,
+          version: d.currentVersion ? d.currentVersion.version : null,
+          entryDate: d.currentVersion ? d.currentVersion.entryDate : null,
+          fileName: d.currentVersion ? d.currentVersion.fileName : null,
+          hasProof: !!(d.currentVersion && d.currentVersion.proofID),
+          proofStatus: d.currentVersion ? d.currentVersion.proofStatus : null,
+        });
+        docsByProject.set(pid, arr);
+      });
+
+      // Step 3: per-project readiness analysis
+      const previousFieldFor = {
+        creative: null,                   // no previous review
+        marketing: 'creativeReviewDate',
+        mkt: 'creativeReviewDate',
+        exec: 'marketingReviewDate',
+      };
+      const previousField = previousFieldFor[reviewType];
+
+      const analyzed = projects.map(proj => {
+        const docs = (docsByProject.get(proj.ID) || []).filter(d => d.hasProof);
+        const proofEntryTimes = docs
+          .map(d => parseWFDate(d.entryDate))
+          .filter(Boolean)
+          .map(d => d.getTime());
+        const latestProofMs = proofEntryTimes.length ? Math.max(...proofEntryTimes) : null;
+        const latestProofAt = latestProofMs ? new Date(latestProofMs).toISOString() : null;
+
+        let needsProof = false;
+        let reason = '';
+        let previousReviewISO = null;
+
+        if (!previousField) {
+          // Creative review — needs proof if no proof doc exists at all
+          if (docs.length === 0) {
+            needsProof = true;
+            reason = 'no-proof-posted';
+          } else {
+            needsProof = false;
+            reason = 'proof-exists';
+          }
+        } else {
+          const prevDt = parseWFDate(proj[previousField]);
+          previousReviewISO = prevDt ? prevDt.toISOString() : null;
+          if (!prevDt) {
+            // No previous review date known → treat like first review
+            if (docs.length === 0) { needsProof = true; reason = 'no-proof-posted'; }
+            else { needsProof = false; reason = 'proof-exists-no-prev-review-to-compare'; }
+          } else if (!latestProofMs) {
+            needsProof = true;
+            reason = 'no-proof-posted';
+          } else if (latestProofMs <= prevDt.getTime()) {
+            needsProof = true;
+            reason = 'no-new-version-since-previous-review';
+          } else {
+            needsProof = false;
+            reason = 'new-version-posted';
+          }
+        }
+
+        return {
+          projectID: proj.ID,
+          projectName: proj.name,
+          projectUrl: proj.projectUrl,
+          designer: proj.designer,
+          copywriter: proj.copywriter,
+          pm: proj.pm,
+          channel: proj.channel,
+          reviewDate: proj[reviewField],
+          previousReviewDate: previousReviewISO,
+          latestProofVersionAt: latestProofAt,
+          needsProof,
+          reason,
+          proofDocs: docs,
+        };
+      });
+
+      return res.status(200).json({
+        window: { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) },
+        reviewType,
+        total: analyzed.length,
+        needsProofCount: analyzed.filter(p => p.needsProof).length,
+        projects: analyzed,
+      });
+    }
+
     // POST /upload-proof - Upload a proof to a Workfront project
     // Expects JSON body: { projectName: "WK15 Patriotic", fileBase64: "...", fileName: "proof.pdf" }
     else if (path === '/upload-proof' || path === '/upload-proof/') {

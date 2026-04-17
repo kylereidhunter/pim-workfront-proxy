@@ -216,6 +216,15 @@ REVIEW SCHEDULE REFERENCE (typical):
 - Exec Review: Thursday. Proofs + JPEGs due 1 PM Wednesday.
 (Always use actual dates from Workfront — this is just a sanity check.)
 
+CHECKING PROOF READINESS:
+When the user asks "which projects still need a proof?", "who hasn't posted a proof for CR?", "what's missing proofs for marketing review next week?", etc. — ALWAYS call \`checkProofsForReview\` with the relevant reviewType + window. The server does the real analysis (does a proof exist? has a new version been posted since the previous review?) — the response tells you per project: \`needsProof: true|false\`, \`reason\`, \`latestProofVersionAt\`, \`previousReviewDate\`, and \`proofDocs\`.
+
+- Default scope: if the user doesn't specify, check ALL three reviews in the window (three calls, one per reviewType). Group the "needs proof" output by reviewType.
+- When showing the list, include the reason when it's informative:
+  - \`reason: 'no-proof-posted'\` → "No proof posted yet"
+  - \`reason: 'no-new-version-since-previous-review'\` → "No new version since [previous review date]"
+- NEVER try to derive proof readiness from \`getProofStatus\` or \`findProjectDocuments\` — they don't compare against the previous review date. Use \`checkProofsForReview\`.
+
 SENDING DOCUMENTS FROM A PROJECT:
 When a user asks "send me the SKU list for [project]", "grab the brief for [project]", "what documents are on [project]?", etc., call \`findProjectDocuments\` with the project name and (if they named a specific doc type) the document filter.
 
@@ -336,6 +345,31 @@ const tools = [
           name: { type: 'string', description: 'Project name to search (e.g. WK15, Patriotic)' },
         },
         required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'checkProofsForReview',
+      description: 'Server-side deterministic check of which projects in a review window still NEED a proof. For Creative Review: needs a proof = no proof document exists. For Marketing/Exec Review: needs a proof = no new proof version uploaded since the previous review date. Use this for "which projects still need proofs?", "who\'s missing proofs for CR?", etc. DO NOT try to figure this out yourself from getProofStatus.',
+      parameters: {
+        type: 'object',
+        properties: {
+          reviewType: {
+            type: 'string',
+            enum: ['creative', 'marketing', 'exec'],
+            description: 'Which review to check readiness for.',
+          },
+          window: {
+            type: 'string',
+            enum: ['thisweek', 'nextweek', 'last7', 'next7', 'thismonth'],
+            description: 'Named window for which projects to check.',
+          },
+          startDate: { type: 'string' },
+          endDate: { type: 'string' },
+        },
+        required: ['reviewType'],
       },
     },
   },
@@ -531,6 +565,14 @@ async function executeTool(name, args, ctx) {
         return await callProxy(`/tasks?projectId=${encodeURIComponent(args.projectId)}`);
       case 'getProofStatus':
         return await callProxy(`/proofs?name=${encodeURIComponent(args.name)}`);
+      case 'checkProofsForReview': {
+        const q = new URLSearchParams();
+        q.set('reviewType', args.reviewType);
+        if (args.window) q.set('window', args.window);
+        if (args.startDate) q.set('startDate', args.startDate);
+        if (args.endDate) q.set('endDate', args.endDate);
+        return await callProxy(`/proof-readiness?${q}`);
+      }
       case 'findProjectDocuments': {
         const docs = await callProxy(`/docs?name=${encodeURIComponent(args.projectName)}`);
         if (!docs || !docs.data) return docs;
