@@ -106,22 +106,34 @@ function extractReviewDates(result) {
     (proj.tasks || []).forEach(t => {
       const n = (t.name || '').toLowerCase();
       // HARD SKIP any edit / internal-review / revision phase tasks.
-      // These are "R2 - Internal Review + Edits" style tasks whose end
-      // date is the edit deadline (often much later than the actual
-      // review). They must NEVER be used as a review or proof-due date.
       if (n.includes('edits') || n.includes('revision') || n.includes('internal review')) return;
       const isProofDue = n.includes('proof due');
+      // Per team convention, the "Proof Due" task's completion date IS the
+      // review date. The "Review + Feedback" task is a fallback used only
+      // when no Proof Due task exists.
       if (n.includes('r1 - creative review') || n.includes('r1 - proof due for creative')) {
-        if (isProofDue) out.proofDueCreativeReview = t.plannedCompletionDate;
-        else out.creativeReviewDate = t.plannedCompletionDate;
+        if (isProofDue) {
+          out.creativeReviewDate = t.plannedCompletionDate;
+          out.proofDueCreativeReview = t.plannedCompletionDate;
+        } else if (out.creativeReviewDate == null) {
+          out.creativeReviewDate = t.plannedCompletionDate;
+        }
       }
       if (n.includes('r2 - marketing review') || n.includes('r2 - proof due for marketing')) {
-        if (isProofDue) out.proofDueMarketingReview = t.plannedCompletionDate;
-        else out.marketingReviewDate = t.plannedCompletionDate;
+        if (isProofDue) {
+          out.marketingReviewDate = t.plannedCompletionDate;
+          out.proofDueMarketingReview = t.plannedCompletionDate;
+        } else if (out.marketingReviewDate == null) {
+          out.marketingReviewDate = t.plannedCompletionDate;
+        }
       }
       if (n.includes('r3 - exec') || n.includes('r3 - proof due for exec')) {
-        if (isProofDue) out.proofDueExecReview = t.plannedCompletionDate;
-        else out.execReviewDate = t.plannedCompletionDate;
+        if (isProofDue) {
+          out.execReviewDate = t.plannedCompletionDate;
+          out.proofDueExecReview = t.plannedCompletionDate;
+        } else if (out.execReviewDate == null) {
+          out.execReviewDate = t.plannedCompletionDate;
+        }
       }
       if (n.includes('r5 - deliver final files') || n.includes('deliver final')) {
         out.deliverDate = t.plannedCompletionDate;
@@ -500,14 +512,15 @@ module.exports = async (req, res) => {
           return d && d >= start && d <= end;
         });
 
-      // Fetch docs filtered by the specific project IDs in the window.
-      // (Filtering by name would hit the 500-doc cap and miss newer projects.)
+      // Fetch docs for the window's projects via docObjCode/objID (the direct
+      // parent relation — more reliable than filtering on project:ID).
       const projIdList = projects.map(p => p.ID).filter(Boolean);
       const docRaw = projIdList.length
         ? await callWorkfront('docu/search', {
-            'project:ID': projIdList.join(','),
-            'project:ID_Mod': 'in',
-            fields: 'ID,name,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus',
+            docObjCode: 'PROJ',
+            objID: projIdList.join(','),
+            objID_Mod: 'in',
+            fields: 'ID,name,objID,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus',
             '$$LIMIT': '500',
           })
         : { data: [] };
@@ -629,22 +642,24 @@ module.exports = async (req, res) => {
           return d && d >= start && d <= end;
         });
 
-      // Step 2: fetch docs filtered by the specific project IDs we picked
-      // (not by project name — that returns oldest 500 across all FY27 and
-      // misses newer projects). This guarantees we get every doc for every
-      // project in the window.
+      // Step 2: fetch docs for these projects via the direct parent relation
+      // (docs have docObjCode=PROJ + objID=<project ID>). Using
+      // project:ID_Mod=in didn't filter correctly at the nested level.
       const projIdList = projects.map(p => p.ID).filter(Boolean);
       const docRaw = projIdList.length
         ? await callWorkfront('docu/search', {
-            'project:ID': projIdList.join(','),
-            'project:ID_Mod': 'in',
-            fields: 'ID,name,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
+            docObjCode: 'PROJ',
+            objID: projIdList.join(','),
+            objID_Mod: 'in',
+            fields: 'ID,name,objID,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
             '$$LIMIT': '500',
           })
         : { data: [] };
       const docsByProject = new Map();
       (docRaw && docRaw.data || []).forEach(d => {
-        const pid = d.project && d.project.ID;
+        // Use objID (parent project ID) which is the reliable key — project.ID
+        // can be empty if the nested relation isn't fully resolved.
+        const pid = d.objID || (d.project && d.project.ID);
         if (!pid) return;
         const arr = docsByProject.get(pid) || [];
         arr.push({
@@ -977,14 +992,26 @@ module.exports = async (req, res) => {
           };
           tasks.forEach(t => {
             const tname = (t.name || '').toLowerCase();
-            // Skip edit / internal-review phases — never confuse them with the review date.
             if (tname.includes('edits') || tname.includes('revision') || tname.includes('internal review')) return;
-            if (tname.includes('r1 - creative review') && !tname.includes('proof')) info.creativeReview = t.plannedCompletionDate;
-            if (tname.includes('r2 - marketing review') && !tname.includes('proof')) info.marketingReview = t.plannedCompletionDate;
-            if (tname.includes('r3 - exec') && !tname.includes('proof')) info.execReview = t.plannedCompletionDate;
-            if (tname.includes('r1 - proof due')) info.proofDueCR = t.plannedCompletionDate;
-            if (tname.includes('r2 - proof due')) info.proofDueMKT = t.plannedCompletionDate;
-            if (tname.includes('r3 - proof due')) info.proofDueExec = t.plannedCompletionDate;
+            // Proof Due task's date IS the review date per team convention.
+            if (tname.includes('r1 - proof due')) {
+              info.proofDueCR = t.plannedCompletionDate;
+              info.creativeReview = t.plannedCompletionDate;
+            } else if (tname.includes('r1 - creative review') && info.creativeReview == null) {
+              info.creativeReview = t.plannedCompletionDate;
+            }
+            if (tname.includes('r2 - proof due')) {
+              info.proofDueMKT = t.plannedCompletionDate;
+              info.marketingReview = t.plannedCompletionDate;
+            } else if (tname.includes('r2 - marketing review') && info.marketingReview == null) {
+              info.marketingReview = t.plannedCompletionDate;
+            }
+            if (tname.includes('r3 - proof due')) {
+              info.proofDueExec = t.plannedCompletionDate;
+              info.execReview = t.plannedCompletionDate;
+            } else if (tname.includes('r3 - exec') && info.execReview == null) {
+              info.execReview = t.plannedCompletionDate;
+            }
           });
           // Only include email/SMS/push projects
           if (info.channel && info.channel.includes('Email')) projects.push(info);
