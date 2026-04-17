@@ -11,9 +11,10 @@
     { "source": "/upcoming-reviews", "destination": "/api/index" },
     { "source": "/reviews", "destination": "/api/index" },
     { "source": "/upload-proof", "destination": "/api/index" },
-    { "source": "/weekly-digest", "destination": "/api/index" }
+    { "source": "/weekly-digest", "destination": "/api/index" },
+    { "source": "/cron", "destination": "/api/index" }
   ],
   "crons": [
-    { "path": "/api/cron", "schedule": "*/5 * * * *" }
+    { "path": "/cron", "schedule": "*/5 * * * *" }
   ]
 }

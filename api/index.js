@@ -661,6 +661,43 @@ module.exports = async (req, res) => {
       });
     }
 
+    // GET /cron — fires due scheduled messages. Hit every 5 min by Vercel Cron
+    // (configured in vercel.json). Merged into index.js because Vercel wasn't
+    // picking up api/cron.js as its own function.
+    else if (path === '/cron' || path === '/cron/') {
+      const auth = req.headers.authorization || '';
+      if (process.env.CRON_SECRET && !auth.includes(process.env.CRON_SECRET)) {
+        return res.status(401).json({ error: 'unauthorized' });
+      }
+      try {
+        const {
+          getDueSchedules,
+          getConversationRef,
+          markFired,
+        } = require('./lib/schedule-store');
+        const { sendProactive } = require('./lib/proactive');
+        const { buildMessage } = require('./lib/message-builder');
+        const due = await getDueSchedules();
+        if (due.length === 0) return res.status(200).json({ ok: true, fired: 0 });
+        const results = [];
+        for (const sched of due) {
+          try {
+            const ref = await getConversationRef(sched.conversationId);
+            if (!ref) { results.push({ id: sched.id, status: 'no-conv-ref' }); continue; }
+            const text = await buildMessage(sched.messageKind, sched.messageArgs);
+            await sendProactive(ref, text);
+            await markFired(sched.id);
+            results.push({ id: sched.id, status: 'sent' });
+          } catch (err) {
+            results.push({ id: sched.id, status: 'error', error: err.message });
+          }
+        }
+        return res.status(200).json({ ok: true, fired: results.length, results });
+      } catch (err) {
+        return res.status(500).json({ ok: false, error: err.message });
+      }
+    }
+
     // GET / or /health
     else if (path === '/health' || path === '/') {
       return res.status(200).json({ status: 'ok', message: 'Pim Workfront Proxy is running' });
