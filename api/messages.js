@@ -5,8 +5,19 @@ const {
   CloudAdapter,
   ConfigurationServiceClientCredentialFactory,
   createBotFrameworkAuthenticationFromConfiguration,
+  TurnContext,
 } = require('botbuilder');
 const OpenAI = require('openai');
+const {
+  saveConversationRef,
+  createSchedule,
+  listSchedulesForConv,
+  cancelSchedule,
+  validateCron,
+  formatCT,
+  nextFromCron,
+  TZ,
+} = require('./lib/schedule-store');
 
 // ---------- Bot Framework adapter ----------
 // Microsoft's recommended wiring: build the credentials factory from env vars,
@@ -174,6 +185,29 @@ REVIEW SCHEDULE REFERENCE (typical):
 - Exec Review: Thursday. Proofs + JPEGs due 1 PM Wednesday.
 (Always use actual dates from Workfront — this is just a sanity check.)
 
+SCHEDULED MESSAGES & REMINDERS:
+You can post to "this chat" on a schedule. All times are Central Time (America/Chicago).
+
+- Recurring ("send a weekly digest every Friday at 10am") → call \`scheduleRecurring\`. Convert the user's phrasing into a standard 5-field cron expression:
+  - "every Friday at 10am" = "0 10 * * 5"
+  - "every weekday at 9am" = "0 9 * * 1-5"
+  - "first of every month at 8am" = "0 8 1 * *"
+  - "every Monday and Thursday at 3:30pm" = "30 15 * * 1,4"
+  - Cron days: 0 or 7 = Sun, 1 = Mon, …, 5 = Fri, 6 = Sat.
+  - After scheduling, echo back what you set up + the next fire time (the tool response gives you \`nextRun\`).
+
+- One-time ("remind me tomorrow at 3pm to …") → call \`scheduleOneTime\`. Convert to an ISO timestamp in Central Time WITH offset (e.g. "2026-04-18T15:00:00-05:00"). The USER CONTEXT block includes today's date and today's Central-time offset — use them. For relative times ("in 30 min") compute from the provided current ISO time.
+
+- Listing ("what do you have scheduled?") → \`listSchedules\`. Show each one's description, when it next fires, and its id.
+
+- Cancelling ("stop the Friday digest") → call \`listSchedules\` first to find the matching schedule, then \`cancelSchedule\` with its id. Confirm in plain English what you cancelled.
+
+- Message kinds available:
+  - \`weekly-reviews-digest\` with args \`{ window: "nextweek" }\` or \`{ window: "thisweek" }\` → posts the full CR/MKT/Exec review lineup.
+  - \`reminder-text\` with args \`{ text: "..." }\` → posts a plain text reminder.
+
+When the user says "in this chat" or doesn't specify — always schedule to THE CURRENT conversation. The tool does that automatically; you don't pass a conversationId.
+
 TOOLS:
 - \`searchProjects\` — find projects by name (e.g. "FY27", "Patriotic", "WK15")
 - \`getProjectDetails\` — full details for one project by ID
@@ -285,6 +319,83 @@ const tools = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'scheduleRecurring',
+      description: 'Schedule a recurring message Pim will send to THIS chat on a cron schedule. Use this when the user asks Pim to "send a weekly digest every Friday at 10am", "remind us every Monday morning", etc. Pim converts the natural-language schedule into a standard cron expression in Central Time.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cron: {
+            type: 'string',
+            description: 'Standard 5-field cron expression interpreted in America/Chicago. Fields: minute hour day-of-month month day-of-week. Examples: Fridays 10am = "0 10 * * 5"; every weekday 9am = "0 9 * * 1-5"; every Monday 8:30am = "30 8 * * 1".',
+          },
+          messageKind: {
+            type: 'string',
+            enum: ['weekly-reviews-digest', 'reminder-text'],
+            description: 'weekly-reviews-digest = full list of projects in CR/MKT/Exec review in the given window. reminder-text = post a plain text reminder.',
+          },
+          messageArgs: {
+            type: 'object',
+            description: 'Args for the message. For weekly-reviews-digest: { window: "nextweek" | "thisweek" }. For reminder-text: { text: "..." }.',
+          },
+          description: {
+            type: 'string',
+            description: 'Short human description of the schedule for listing later, e.g. "weekly review digest, Friday 10am".',
+          },
+        },
+        required: ['cron', 'messageKind', 'description'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'scheduleOneTime',
+      description: 'Schedule a one-time reminder in THIS chat. Use for "remind me tomorrow at 3pm to approve proofs", "ping me in 30 minutes", etc.',
+      parameters: {
+        type: 'object',
+        properties: {
+          runAt: {
+            type: 'string',
+            description: 'ISO 8601 timestamp in Central Time WITH offset, e.g. "2026-04-20T15:00:00-05:00". Convert the user\'s natural language ("tomorrow 3pm", "in 30 min") using the "Today" date and the Central Time offset provided in USER CONTEXT.',
+          },
+          text: {
+            type: 'string',
+            description: 'The reminder text Pim will post at that time. Keep it short and in Pim\'s voice.',
+          },
+          description: {
+            type: 'string',
+            description: 'Short description for the schedule list, e.g. "approve patriotic proofs @ 3pm Mon".',
+          },
+        },
+        required: ['runAt', 'text', 'description'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'listSchedules',
+      description: 'List the active scheduled messages/reminders for THIS chat. Use when the user asks "what reminders do you have set?", "what schedules are running?", etc.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'cancelSchedule',
+      description: 'Cancel a scheduled message/reminder by its ID. Call listSchedules first if the user names the schedule by description instead of ID, so you can look up the right ID.',
+      parameters: {
+        type: 'object',
+        properties: {
+          scheduleId: { type: 'string', description: 'The id field from listSchedules.' },
+        },
+        required: ['scheduleId'],
+      },
+    },
+  },
 ];
 
 // ---------- Proxy caller ----------
@@ -299,7 +410,7 @@ async function callProxy(pathAndQuery) {
   return await r.json();
 }
 
-async function executeTool(name, args) {
+async function executeTool(name, args, ctx) {
   try {
     switch (name) {
       case 'searchProjects': {
@@ -323,6 +434,69 @@ async function executeTool(name, args) {
         if (args.channel) q.set('channel', args.channel);
         return await callProxy(`/reviews?${q}`);
       }
+      case 'scheduleRecurring': {
+        if (!ctx || !ctx.conversationId) return { error: 'No conversation context' };
+        const check = validateCron(args.cron);
+        if (!check.ok) return { error: check.error };
+        const rec = await createSchedule({
+          type: 'recurring',
+          cron: args.cron,
+          conversationId: ctx.conversationId,
+          createdBy: ctx.userName,
+          description: args.description || '',
+          messageKind: args.messageKind,
+          messageArgs: args.messageArgs || {},
+        });
+        return {
+          ok: true,
+          id: rec.id,
+          description: rec.description,
+          cron: rec.cron,
+          nextRun: formatCT(rec.nextRunAtMs),
+          nextRunISO: new Date(rec.nextRunAtMs).toISOString(),
+        };
+      }
+      case 'scheduleOneTime': {
+        if (!ctx || !ctx.conversationId) return { error: 'No conversation context' };
+        const runMs = new Date(args.runAt).getTime();
+        if (isNaN(runMs)) return { error: `Invalid runAt timestamp: ${args.runAt}` };
+        if (runMs < Date.now() - 60000) return { error: 'runAt is in the past' };
+        const rec = await createSchedule({
+          type: 'once',
+          runAt: args.runAt,
+          conversationId: ctx.conversationId,
+          createdBy: ctx.userName,
+          description: args.description || '',
+          messageKind: 'reminder-text',
+          messageArgs: { text: args.text },
+        });
+        return {
+          ok: true,
+          id: rec.id,
+          description: rec.description,
+          fires: formatCT(rec.nextRunAtMs),
+        };
+      }
+      case 'listSchedules': {
+        if (!ctx || !ctx.conversationId) return { error: 'No conversation context' };
+        const items = await listSchedulesForConv(ctx.conversationId);
+        return {
+          count: items.length,
+          schedules: items.map(s => ({
+            id: s.id,
+            type: s.type,
+            description: s.description,
+            cron: s.cron,
+            nextRun: formatCT(s.nextRunAtMs),
+            messageKind: s.messageKind,
+            createdBy: s.createdBy,
+          })),
+        };
+      }
+      case 'cancelSchedule': {
+        const ok = await cancelSchedule(args.scheduleId);
+        return ok ? { ok: true, cancelled: args.scheduleId } : { error: `Schedule not found: ${args.scheduleId}` };
+      }
       default:
         return { error: `Unknown tool: ${name}` };
     }
@@ -331,8 +505,22 @@ async function executeTool(name, args) {
   }
 }
 
+// Capture a conversation reference so Pim can message this chat proactively
+// (for scheduled digests/reminders). We do this on every inbound activity —
+// cheap, idempotent, and keeps refs fresh if conversation IDs rotate.
+async function captureConvRef(context) {
+  try {
+    const ref = TurnContext.getConversationReference(context.activity);
+    await saveConversationRef(ref);
+  } catch (err) {
+    logErr('captureConvRef', err);
+  }
+}
+
 // ---------- Core bot logic ----------
 async function handlePimMessage(context) {
+  await captureConvRef(context);
+
   const userMessage = (context.activity.text || '').trim();
   if (!userMessage) return;
 
@@ -342,6 +530,19 @@ async function handlePimMessage(context) {
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
   const dayName = today.toLocaleDateString('en-US', { weekday: 'long' });
+  // Central-time context for scheduling tools. We format the current wall
+  // clock in Chicago + derive the current offset (accounts for DST).
+  const ctParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+    timeZoneName: 'shortOffset',
+  }).formatToParts(today);
+  const ctGet = (t) => (ctParts.find(p => p.type === t) || {}).value;
+  const ctDate = `${ctGet('year')}-${ctGet('month')}-${ctGet('day')}`;
+  const ctTime = `${ctGet('hour')}:${ctGet('minute')}`;
+  const ctOffset = (ctGet('timeZoneName') || 'GMT-06').replace('GMT', '').replace(/^([+-])(\d)$/, '$10$2') + ':00';
+  const ctNowISO = `${ctDate}T${ctTime}:00${ctOffset}`;
 
   // Who is talking to Pim right now? Teams supplies this on every activity.
   const fromName = (context.activity.from && context.activity.from.name) || '';
@@ -351,6 +552,8 @@ async function handlePimMessage(context) {
     '';
   // "Kyle Hunter" → "Kyle" — first name for matching against DE:Lead Designer / Copywriter.
   const firstName = fromName.split(' ')[0] || '';
+  const conversationId = context.activity.conversation && context.activity.conversation.id;
+  const toolCtx = { conversationId, userName: fromName };
 
   const userContext =
     `USER CONTEXT (authoritative — overrides any example name in the system prompt):\n` +
@@ -368,7 +571,7 @@ async function handlePimMessage(context) {
   const messages = [
     {
       role: 'system',
-      content: `${PIM_SYSTEM_PROMPT}\n\nToday's date: ${todayStr} (${dayName}).\n\n${userContext}`,
+      content: `${PIM_SYSTEM_PROMPT}\n\nToday's date: ${todayStr} (${dayName}).\nCurrent time in Central (America/Chicago): ${ctNowISO}. Use this exact offset when building runAt timestamps for scheduleOneTime.\n\n${userContext}`,
     },
     { role: 'user', content: userMessage },
   ];
@@ -396,7 +599,7 @@ async function handlePimMessage(context) {
       for (const tc of msg.tool_calls) {
         let args = {};
         try { args = JSON.parse(tc.function.arguments || '{}'); } catch (_) {}
-        const result = await executeTool(tc.function.name, args);
+        const result = await executeTool(tc.function.name, args, toolCtx);
         // Cap tool response size to stay under token limits
         const serialized = JSON.stringify(result);
         messages.push({
@@ -422,6 +625,7 @@ async function botLogic(context) {
   if (context.activity.type === 'message') {
     await handlePimMessage(context);
   } else if (context.activity.type === 'conversationUpdate') {
+    await captureConvRef(context);
     const added = context.activity.membersAdded || [];
     const meId = context.activity.recipient && context.activity.recipient.id;
     const botWasAdded = added.some(m => m.id === meId);
