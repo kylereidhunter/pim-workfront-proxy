@@ -47,35 +47,43 @@ function projectUrlFor(id) {
 }
 
 function extractReviewDates(result) {
-  if (result.data) {
-    result.data.forEach(proj => {
-      const tasks = proj.tasks || [];
-      tasks.forEach(t => {
-        const name = (t.name || '').toLowerCase();
-        if (name.includes('r1 - creative review') || name.includes('r1 - proof due for creative')) {
-          if (name.includes('proof due')) proj.proofDueCreativeReview = t.plannedCompletionDate;
-          else proj.creativeReviewDate = t.plannedCompletionDate;
-        }
-        if (name.includes('r2 - marketing review') || name.includes('r2 - proof due for marketing')) {
-          if (name.includes('proof due')) proj.proofDueMarketingReview = t.plannedCompletionDate;
-          else proj.marketingReviewDate = t.plannedCompletionDate;
-        }
-        if (name.includes('r3 - exec') || name.includes('r3 - proof due for exec')) {
-          if (name.includes('proof due')) proj.proofDueExecReview = t.plannedCompletionDate;
-          else proj.execReviewDate = t.plannedCompletionDate;
-        }
-        if (name.includes('r5 - deliver final files') || name.includes('deliver final')) {
-          proj.deliverDate = t.plannedCompletionDate;
-        }
-      });
-      if (proj.owner) {
-        proj.pm = proj.owner.name;
-        delete proj.owner;
+  if (!result.data) return result;
+  result.data = result.data.map(proj => {
+    const out = {
+      ID: proj.ID,
+      name: proj.name,
+      status: proj.status,
+      designer: proj['DE:Lead Designer'] || null,
+      copywriter: proj['DE:Lead Copywriter'] || null,
+      pm: proj.owner ? proj.owner.name : null,
+      channel: proj['DE:Channel'] || null,
+      projectType: proj['DE:Project Type'] || null,
+      liveDate: proj['DE:Live Date'] || null,
+      fiscalWeek: proj['DE:Fiscal Weeks'] || null,
+      proofUrl: proj['DE:Proof URL'] || null,
+      projectUrl: projectUrlFor(proj.ID),
+    };
+    (proj.tasks || []).forEach(t => {
+      const n = (t.name || '').toLowerCase();
+      const isProofDue = n.includes('proof due');
+      if (n.includes('r1 - creative review') || n.includes('r1 - proof due for creative')) {
+        if (isProofDue) out.proofDueCreativeReview = t.plannedCompletionDate;
+        else out.creativeReviewDate = t.plannedCompletionDate;
       }
-      proj.projectUrl = projectUrlFor(proj.ID);
-      delete proj.tasks;
+      if (n.includes('r2 - marketing review') || n.includes('r2 - proof due for marketing')) {
+        if (isProofDue) out.proofDueMarketingReview = t.plannedCompletionDate;
+        else out.marketingReviewDate = t.plannedCompletionDate;
+      }
+      if (n.includes('r3 - exec') || n.includes('r3 - proof due for exec')) {
+        if (isProofDue) out.proofDueExecReview = t.plannedCompletionDate;
+        else out.execReviewDate = t.plannedCompletionDate;
+      }
+      if (n.includes('r5 - deliver final files') || n.includes('deliver final')) {
+        out.deliverDate = t.plannedCompletionDate;
+      }
     });
-  }
+    return out;
+  });
   return result;
 }
 

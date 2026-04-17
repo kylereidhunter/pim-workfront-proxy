@@ -79,17 +79,19 @@ CRITICAL — NEVER DO THESE:
 - NEVER invent dates. If a tool doesn't return a date, say "TBD" or ask for clarification.
 - NEVER filter projects by channel (Email vs Text/Push vs Loyalty) unless the user explicitly asks for one channel. When asked about a review date, return EVERY project hitting that date — email, text/push, and loyalty all count.
 - NEVER use \`DE:Proof URL\` or any proof link when the user asks for a "project link", "Workfront link", or "link to the project". Those are proof-viewer URLs and are often mislabeled/stale.
+- NEVER fabricate a designer, copywriter, or PM name. Only use the literal \`designer\`, \`copywriter\`, and \`pm\` values that appeared in the tool response for THAT specific project. If a field is null or empty, write "TBD" — do not guess, do not borrow a name from another project, do not use the user's own name to fill it in.
+- NEVER copy assignee names across projects. If Project A returns designer="Charito Jones" and Project B returns designer=null, Project B's designer is "TBD" — NOT Charito, NOT Kyle.
 
 LINKING RULES:
-- "Project link" / "Workfront link" / "link to the project" → use the \`projectUrl\` field on each project. Every project returned by searchProjects/getProjectDetails/getUpcomingReviews now includes \`projectUrl\` (format: https://athome.my.workfront.com/project/{ID}/overview). Always attach the projectUrl belonging to THAT specific project — never mix URLs across projects.
-- "Proof link" / "link to the proof" → only then use \`DE:Proof URL\` (if present) or call getProofStatus.
+- "Project link" / "Workfront link" / "link to the project" → use the \`projectUrl\` field on each project. Every project returned by searchProjects/getProjectDetails/getUpcomingReviews includes \`projectUrl\` (format: https://athome.my.workfront.com/project/{ID}/overview). Always attach the projectUrl belonging to THAT specific project — never mix URLs across projects.
+- "Proof link" / "link to the proof" → only then use the \`proofUrl\` field (if present) or call getProofStatus.
 - Label the link clearly: write "Project" for projectUrl and "Proof" for proof URLs. Don't mix the labels up.
 - Format as markdown: \`- **Project Name** — [Open in Workfront](projectUrl)\`.
 
 CHANNELS (all are in scope — never drop one):
-- Email projects — the \`DE:Channel\` field contains "Email".
-- Text/Push projects — the \`DE:Channel\` field contains "Text", "SMS", or "Push".
-- Loyalty projects — identified by \`DE:Project Type\` containing "Loyalty" or the project name containing "Loyalty".
+- Email projects — the \`channel\` field contains "Email".
+- Text/Push projects — the \`channel\` field contains "Text", "SMS", or "Push".
+- Loyalty projects — identified by \`projectType\` containing "Loyalty" or the project name containing "Loyalty".
 If a project has a review date in the requested window, include it regardless of channel. Group or label by channel if helpful, but never silently omit.
 
 HOW TO FIND REVIEWS FOR A DATE RANGE:
@@ -275,12 +277,11 @@ async function handlePimMessage(context) {
     (fromEmail ? `, email/id ${fromEmail}` : '') + '.\n' +
     `Greet THEM by name — use "${firstName || fromName || 'there'}", not any example name from the prompt. Kyle is NOT the user unless the sender above is literally Kyle.\n` +
     `When they say "I", "me", "my", or "mine", it refers to ${fromName || 'that person'} — whoever is messaging right now, regardless of who it is.\n\n` +
-    `FILTERING "MY PROJECTS" (STRICT — do not skip any of these rules):\n` +
-    `1. A project is "${firstName || fromName}'s" ONLY if "${firstName || fromName}" appears in one of these fields: DE:Lead Designer, DE:Lead Copywriter, OR pm (the project owner). Case-insensitive, partial-match on first name is fine ("${firstName}" matches "${firstName} Smith").\n` +
-    `2. NEVER include a project just because it's in the requested review window — the name must match one of those three fields.\n` +
-    `3. If ZERO projects match, say exactly that: "I don't see you listed as Lead Designer, Lead Copywriter, or PM on anything going to [review] [when]. Want me to show the full list for that review?" DO NOT list other people's projects as a fallback.\n` +
-    `4. When listing, show WHY the user matched — e.g. "(you're PM)" or "(Lead Designer)" — so they can sanity-check.\n` +
-    `5. Include projects from ALL channels (email, text/push, loyalty) — don't drop text/push or loyalty just because they're not email.`;
+    `"MY PROJECTS" DEFINITION:\n` +
+    `- "My projects" / "projects I'm on" / "projects I have" means ALL FY27 projects in the team's pipeline — not filtered by assignee. The user oversees the whole FY27 workstream, so every FY27 project counts as "theirs".\n` +
+    `- Do NOT try to filter projects by matching the user's name against designer/copywriter/pm. Return everything the tool gave you that fits the date/review/channel criteria they asked about.\n` +
+    `- Include projects from ALL channels (email, text/push, loyalty) unless they explicitly ask for one channel.\n` +
+    `- When listing a project, the designer/copywriter/pm you show MUST be the literal value from that project's tool response. If null/empty, write "TBD". Never substitute the user's name.`;
 
   const messages = [
     {
@@ -298,7 +299,7 @@ async function handlePimMessage(context) {
         model: MODEL,
         messages,
         tools,
-        temperature: 0.7,
+        temperature: 0.2,
       });
     } catch (err) {
       logErr('OpenAI error', err);
@@ -319,7 +320,7 @@ async function handlePimMessage(context) {
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: serialized.length > 40000 ? serialized.substring(0, 40000) + '...[truncated]' : serialized,
+          content: serialized.length > 120000 ? serialized.substring(0, 120000) + '...[truncated]' : serialized,
         });
       }
       continue;
