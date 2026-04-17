@@ -105,6 +105,11 @@ function extractReviewDates(result) {
     };
     (proj.tasks || []).forEach(t => {
       const n = (t.name || '').toLowerCase();
+      // HARD SKIP any edit / internal-review / revision phase tasks.
+      // These are "R2 - Internal Review + Edits" style tasks whose end
+      // date is the edit deadline (often much later than the actual
+      // review). They must NEVER be used as a review or proof-due date.
+      if (n.includes('edits') || n.includes('revision') || n.includes('internal review')) return;
       const isProofDue = n.includes('proof due');
       if (n.includes('r1 - creative review') || n.includes('r1 - proof due for creative')) {
         if (isProofDue) out.proofDueCreativeReview = t.plannedCompletionDate;
@@ -972,6 +977,8 @@ module.exports = async (req, res) => {
           };
           tasks.forEach(t => {
             const tname = (t.name || '').toLowerCase();
+            // Skip edit / internal-review phases — never confuse them with the review date.
+            if (tname.includes('edits') || tname.includes('revision') || tname.includes('internal review')) return;
             if (tname.includes('r1 - creative review') && !tname.includes('proof')) info.creativeReview = t.plannedCompletionDate;
             if (tname.includes('r2 - marketing review') && !tname.includes('proof')) info.marketingReview = t.plannedCompletionDate;
             if (tname.includes('r3 - exec') && !tname.includes('proof')) info.execReview = t.plannedCompletionDate;
