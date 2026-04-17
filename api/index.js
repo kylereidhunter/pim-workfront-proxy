@@ -406,15 +406,24 @@ module.exports = async (req, res) => {
       const personQuery = String(query.person || '').trim().toLowerCase();
       const tally = new Map();
       const projectsByPerson = new Map();
+      // Flatten multi-assignee fields like "Ryan Creery,Alise Gray" into
+      // individual names so workload counts are accurate per person.
+      const splitNames = (v) => {
+        if (v == null) return [];
+        if (Array.isArray(v)) return v.flatMap(splitNames);
+        if (typeof v !== 'string') return [String(v)].filter(Boolean);
+        return v.split(/[,/]/).map(s => s.trim()).filter(Boolean);
+      };
       for (const p of projects) {
         const roles = [
-          { role: 'designer', name: p.designer },
-          { role: 'copywriter', name: p.copywriter },
-          { role: 'pm', name: p.pm },
+          { role: 'designer', names: splitNames(p.designer) },
+          { role: 'copywriter', names: splitNames(p.copywriter) },
+          { role: 'pm', names: splitNames(p.pm) },
         ];
-        for (const { role, name } of roles) {
-          if (!name) continue;
-          const key = name.toLowerCase();
+        for (const { role, names } of roles) {
+          for (const name of names) {
+            if (!name) continue;
+            const key = name.toLowerCase();
           const entry = tally.get(key) || { name, designer: 0, copywriter: 0, pm: 0, total: 0 };
           entry[role]++;
           entry.total++;
@@ -430,6 +439,7 @@ module.exports = async (req, res) => {
             execReviewDate: p.execReviewDate,
           });
           projectsByPerson.set(key, arr);
+          }
         }
       }
       if (personQuery) {
@@ -493,7 +503,7 @@ module.exports = async (req, res) => {
         docRaw = await callWorkfront('docu/search', {
           'project:name': c,
           'project:name_Mod': 'contains',
-          fields: 'ID,name,project:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus',
+          fields: 'ID,name,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus',
           '$$LIMIT': '500',
         });
         if (docRaw && docRaw.data && docRaw.data.length) break;
@@ -630,13 +640,13 @@ module.exports = async (req, res) => {
         docRaw = await callWorkfront('docu/search', {
           'project:name': c,
           'project:name_Mod': 'contains',
-          fields: 'ID,name,project:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
+          fields: 'ID,name,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
           '$$LIMIT': '500',
         });
         if (docRaw && docRaw.data && docRaw.data.length) break;
       }
       const docsByProject = new Map();
-      (docRaw.data || []).forEach(d => {
+      (docRaw && docRaw.data || []).forEach(d => {
         const pid = d.project && d.project.ID;
         if (!pid) return;
         const arr = docsByProject.get(pid) || [];
