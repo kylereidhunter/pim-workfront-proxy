@@ -532,26 +532,23 @@ module.exports = async (req, res) => {
           return d && d >= start && d <= end;
         });
 
-      // Fetch the 500 most-recently-updated FY27 docs (Workfront's nested
-      // project:ID filter doesn't reliably work), then keep only the ones
-      // belonging to our window's projects.
-      const projIdSet = new Set(projects.map(p => p.ID).filter(Boolean));
-      const docRaw = projIdSet.size
-        ? await callWorkfront('docu/search', {
-            'project:name': 'FY27',
-            'project:name_Mod': 'contains',
-            '$$ORDER_BY': 'lastUpdateDate',
-            '$$ORDER_DIRECTION': 'desc',
-            fields: 'ID,name,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus',
-            '$$LIMIT': '500',
-          })
-        : { data: [] };
-      if (docRaw && docRaw.data) {
-        docRaw.data = docRaw.data.filter(d => d.project && projIdSet.has(d.project.ID));
-      }
+      // Fetch docs per project in parallel. Nested ID filters on docu/search
+      // don't work reliably, so we fire one query per project.
+      const docResults = await Promise.all(
+        projects.map(p =>
+          callWorkfront('docu/search', {
+            'project:ID': p.ID,
+            fields: 'ID,name,project:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus',
+            '$$LIMIT': '100',
+          }).catch(() => ({ data: [] }))
+        )
+      );
+      const docRaw = { data: docResults.flatMap((res, i) =>
+        (res && res.data || []).map(d => ({ ...d, _projectID: projects[i].ID }))
+      ) };
       const docsByProject = new Map();
       (docRaw && docRaw.data || []).forEach(d => {
-        const pid = d.project && d.project.ID;
+        const pid = d._projectID || (d.project && d.project.ID);
         if (!pid) return;
         const arr = docsByProject.get(pid) || [];
         arr.push({
@@ -667,32 +664,25 @@ module.exports = async (req, res) => {
           return d && d >= start && d <= end;
         });
 
-      // Step 2: fetch the 500 most-recently-updated FY27 documents.
-      // Neither project:ID_Mod=in nor docObjCode+objID_Mod=in filters
-      // reliably at Workfront's nested level, so we pull the newest 500
-      // docs on FY27 projects (sorted desc by lastUpdateDate) and match
-      // to our project list client-side. 500 easily covers a week's
-      // worth of active projects.
-      const projIdSet = new Set(projects.map(p => p.ID).filter(Boolean));
-      const docRaw = projIdSet.size
-        ? await callWorkfront('docu/search', {
-            'project:name': 'FY27',
-            'project:name_Mod': 'contains',
-            '$$ORDER_BY': 'lastUpdateDate',
-            '$$ORDER_DIRECTION': 'desc',
-            fields: 'ID,name,lastUpdateDate,project:ID,project:name,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
-            '$$LIMIT': '500',
-          })
-        : { data: [] };
-      // Keep only docs whose project is in our target set
-      if (docRaw && docRaw.data) {
-        docRaw.data = docRaw.data.filter(d => d.project && projIdSet.has(d.project.ID));
-      }
+      // Step 2: fetch docs per project in parallel. Workfront's batch/nested
+      // ID filters don't work reliably on docu/search, and ordering doesn't
+      // either, so we just fire N parallel queries — one per project. Much
+      // more reliable. 19 projects × ~200ms = ~1s worst case.
+      const docResults = await Promise.all(
+        projects.map(p =>
+          callWorkfront('docu/search', {
+            'project:ID': p.ID,
+            fields: 'ID,name,project:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:fileName',
+            '$$LIMIT': '100',
+          }).catch(() => ({ data: [] }))
+        )
+      );
+      const docRaw = { data: docResults.flatMap((res, i) =>
+        (res && res.data || []).map(d => ({ ...d, _projectID: projects[i].ID }))
+      ) };
       const docsByProject = new Map();
       (docRaw && docRaw.data || []).forEach(d => {
-        // Use objID (parent project ID) which is the reliable key — project.ID
-        // can be empty if the nested relation isn't fully resolved.
-        const pid = d.objID || (d.project && d.project.ID);
+        const pid = d._projectID || d.objID || (d.project && d.project.ID);
         if (!pid) return;
         const arr = docsByProject.get(pid) || [];
         arr.push({
