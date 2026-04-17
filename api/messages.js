@@ -140,12 +140,12 @@ If a project has a review date in the requested window, include it regardless of
 
 HOW TO FIND REVIEWS FOR A DATE RANGE:
 
-**SCOPE — narrow by what the user specified:**
-- No review type named + no person named + no channel → call all three reviewTypes (creative, marketing, exec) separately, show every project in each. Triggers: "what's going to reviews next week", "review schedule for next week".
-- Named review type only → one call for that reviewType.
-- "My / mine" or named person → pass \`person\` to narrow to projects where that name is in Designer/Copywriter/PM. If zero match, say so — don't list other people's projects.
-- Named channel → pass \`channel\`.
-- Combine any of the above as needed (e.g. "what do I have on MKT review this week" = reviewType: marketing + person: user's first name).
+**SCOPE — pick the right tool:**
+- **Unscoped** — "reviews this week", "reviews next week", "review schedule", "what's going through reviews" (no review type, no person, no channel) → call \`getReviewsDigest({window})\` and emit its \`text\` field VERBATIM. One-line greeting above it is fine; do NOT reformat, do NOT drop bullets, do NOT add fields.
+- **Named review type only** → \`getReviewsInWindow\` with just that reviewType.
+- **"My / mine" or named person** → \`getReviewsInWindow\` with \`person\`. For "my" calls, zero matches = "Nothing of yours on [review] [window]"; never list others.
+- **Named channel** → add \`channel\`.
+- Combine args as needed ("my MKT review this week" = reviewType:marketing + person:<user>).
 
 **Arguments:**
 - Window: "this week" → window=thisweek ; "next week" → window=nextweek ; "this month" → window=thismonth ; "next 7 days" → window=next7 ; "past week" → window=last7. Specific dates → startDate=YYYY-MM-DD + endDate=YYYY-MM-DD.
@@ -162,15 +162,14 @@ ABSOLUTE RULE: You MUST call a tool for any factual question (what's scheduled, 
 FORMATTING RULES (Teams renders markdown — use it liberally):
 - Strip the "FY27_" prefix when displaying project names.
 - Replace underscores with spaces.
-- **Break your answer into clear sections** using bold headers like **Creative Review (Wed 4/15)** on their own line, followed by a bulleted list.
+- **Break your answer into clear sections** with a bold header like **Creative Review — Wed 4/15** on its own line, followed by a bulleted list.
 - **DAY-OF-WEEK LABELS — USE \`creativeReviewDateLabel\` / \`marketingReviewDateLabel\` / \`execReviewDateLabel\` DIRECTLY from the tool response.** The server pre-formats them as "Tue 4/21", "Wed 4/15", etc. Never compute a day name yourself from a raw date — you will get it wrong. Never assume "MKT = Wednesday" or "CR = Tuesday"; use the label.
-- Use bullet points (- item) for every list of projects. Never run them together in a paragraph.
-- Project line format:  - **Short Project Name** — Designer / Copywriter  (with a real em-dash or " - ").
-- Bold the DESIGNER's name. Copywriter is plain text after a slash.
-- Put a blank line between sections so Teams doesn't collapse them.
-- Keep the intro + outro to ONE short line each. No essay-long preamble.
-- If a list has more than 5 items, group them by fiscal week (WK15, WK16) with a sub-bullet per week.
-- Never use tables — Teams' table rendering is flaky. Always prefer bullets.
+- **One line per project** — no nested sub-bullets per field. Format:
+  \`- **Project Name** (Channel) — Designer / Copywriter — [Workfront](projectUrl)\`
+  Keep it scannable. Do NOT break out Designer, Copywriter, PM, Channel, Live Date into separate indented rows.
+- Put a blank line between sections.
+- Keep the intro and outro to ONE short line each. Skip them entirely when the answer is short.
+- Never use tables — Teams' table rendering is flaky.
 
 ANTI-TRUNCATION (hard rule):
 - When a tool returns 13 projects, show 13. When it returns 23, show 23. NEVER show a subset "for readability". A long reply is the correct reply.
@@ -461,6 +460,24 @@ const tools = [
   {
     type: 'function',
     function: {
+      name: 'getReviewsDigest',
+      description: 'Returns a fully pre-formatted digest of ALL reviews (CR + MKT + Exec) in a given week, grouped by day with clickable Workfront links. Use this for unscoped "reviews this week" / "reviews next week" / "what\'s going through reviews" questions. The response is a finished markdown string — output it VERBATIM with at most a one-line greeting on top. Do NOT reformat, summarize, or drop any lines.',
+      parameters: {
+        type: 'object',
+        properties: {
+          window: {
+            type: 'string',
+            enum: ['thisweek', 'nextweek'],
+            description: 'Which week to digest.',
+          },
+        },
+        required: ['window'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'getReviewsInWindow',
       description: 'Server-filtered list of FY27 projects whose review date falls inside a date window. ALWAYS use this for "what\'s on Creative Review this/next week?", "what\'s in MKT review next week?", "what\'s going to exec review?" The server does the filtering — do NOT filter the results yourself, just format them. Each project comes with projectUrl.',
       parameters: {
@@ -672,6 +689,11 @@ async function executeTool(name, args, ctx) {
       }
       case 'getUpcomingReviews':
         return await callProxy(`/upcoming-reviews?name=${encodeURIComponent(args.name || 'FY27')}`);
+      case 'getReviewsDigest': {
+        const { buildWeeklyReviewsDigest } = require('./lib/message-builder');
+        const text = await buildWeeklyReviewsDigest({ window: args.window || 'thisweek' });
+        return { window: args.window || 'thisweek', text };
+      }
       case 'getReviewsInWindow': {
         const q = new URLSearchParams();
         q.set('reviewType', args.reviewType || 'any');
