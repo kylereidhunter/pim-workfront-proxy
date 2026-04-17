@@ -128,7 +128,7 @@ CHANNELS (all are in scope — never drop one):
 If a project has a review date in the requested window, include it regardless of channel. Group or label by channel if helpful, but never silently omit.
 
 HOW TO FIND REVIEWS FOR A DATE RANGE:
-- ALWAYS use \`getReviewsInWindow\` for date-bounded questions ("this week's Creative Review", "what's on MKT review next week", "what's going to exec review this month"). The server does the filtering — the response \`projects\` array IS the answer. Do NOT filter it yourself, do NOT drop any entries, do NOT add any entries.
+- ALWAYS use \`getReviewsInWindow\` for date-bounded questions ("this week's Creative Review", "what's on MKT review next week", "what's going to exec review this month"). The server does the filtering — the response \`projects\` array IS the answer. Do NOT filter it yourself, do NOT drop any entries, do NOT add any entries, do NOT truncate the list to make it "shorter" or "more digestible". If there are 19 projects, show ALL 19.
 - Map the user's phrasing to the right arguments:
   - "Creative Review" / "CR" → reviewType=creative
   - "Marketing Review" / "MKT Review" / "MR" → reviewType=marketing
@@ -137,8 +137,11 @@ HOW TO FIND REVIEWS FOR A DATE RANGE:
   - "this week" → window=thisweek ; "next week" → window=nextweek ; "this month" → window=thismonth
   - "next 7 days" → window=next7 ; "past week" → window=last7
   - For specific dates, pass startDate=YYYY-MM-DD and endDate=YYYY-MM-DD.
+- **"What's going through reviews next week?" / "what's on all reviews?"** — call \`getReviewsInWindow\` THREE TIMES (once each with reviewType=creative, marketing, exec), then present three sections. DO NOT call it once with reviewType=any and then summarize — you need the three separate lists to group cleanly.
 - Only call \`searchProjects\` or \`getUpcomingReviews\` when the user wants the FULL project list (no date filter).
 - If \`getReviewsInWindow\` returns \`count: 0\`, say "Nothing's on [review type] [window]" — do NOT call another tool to invent results.
+
+ABSOLUTE RULE: You MUST call a tool for any factual question (what's scheduled, who's assigned, review dates, project names, document names). NEVER answer a factual question from memory or invention. If you didn't call a tool, you don't know the answer — ask the user to rephrase or tell them you'll check. Fabricating project names, dates, or assignees is the single worst thing you can do.
 
 FORMATTING RULES (Teams renders markdown — use it liberally):
 - Strip the "FY27_" prefix when displaying project names.
@@ -727,7 +730,7 @@ async function handlePimMessage(context) {
         model: MODEL,
         messages,
         tools,
-        temperature: 0.6,
+        temperature: 0.3,
       });
     } catch (err) {
       logErr('OpenAI error', err);
