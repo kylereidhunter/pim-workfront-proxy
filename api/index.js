@@ -366,14 +366,25 @@ module.exports = async (req, res) => {
       // Workfront's "Updates" tab stores user comments as UPDATE objects.
       // Foreign key: topObjID (root project). Author: enteredByName (flat,
       // not nested). Text: message.
-      const updateRes = await callWorkfront('update/search', {
-        topObjID: projIds.join(','),
-        topObjID_Mod: 'in',
-        entryDate: since,
-        entryDate_Mod: 'gte',
-        fields: 'ID,entryDate,message,enteredByID,enteredByName,topObjID,topObjCode,topName,updateObjCode,updateObjID,updateType',
-        '$$LIMIT': '200',
-      }).catch(e => ({ error: e.message }));
+      // update/search filters: topObjID alone (no _Mod=in), topObjCode=PROJ.
+      // Running one search per project in parallel since topObjID_Mod=in
+      // gets silently rejected.
+      const updateResults = await Promise.all(
+        projIds.slice(0, 200).map(pid =>
+          callWorkfront('update/search', {
+            topObjID: pid,
+            topObjCode: 'PROJ',
+            entryDate: since,
+            entryDate_Mod: 'gte',
+            fields: 'ID,entryDate,message,enteredByID,enteredByName,topObjID,topObjCode,topName,updateObjCode,updateObjID,updateType',
+            '$$LIMIT': '200',
+          }).catch(e => ({ error: e.message }))
+        )
+      );
+      const updateRes = {
+        data: updateResults.flatMap(r => (r && r.data) || []),
+        error: updateResults.find(r => r && r.error && (typeof r.error === 'string' ? r.error : r.error.message))?.error || null,
+      };
 
       const merged = (updateRes && updateRes.data || []).map(u => ({
         source: 'update',
