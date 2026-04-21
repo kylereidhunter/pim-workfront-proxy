@@ -372,7 +372,7 @@ module.exports = async (req, res) => {
         entryDate: since,
         entryDate_Mod: 'gte',
         fields: 'ID,entryDate,message,enteredByID,enteredByName,topObjID,topObjCode,topName,updateObjCode,updateObjID,updateType',
-        '$$LIMIT': '500',
+        '$$LIMIT': '200',
       }).catch(e => ({ error: e.message }));
 
       const merged = (updateRes && updateRes.data || []).map(u => ({
