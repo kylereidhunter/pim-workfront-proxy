@@ -304,11 +304,144 @@ function buildWorkloadCard({ windowLabel, leaderboard, person, personTotal, pers
   return attach(baseCard(body));
 }
 
+// ---------- Documents card ("send me the SKU list for X") ----------
+function buildDocumentsCard({ projectSearched, nameFilter, documents }) {
+  const body = [
+    {
+      type: 'TextBlock',
+      size: 'Large',
+      weight: 'Bolder',
+      text: `📎 Documents${nameFilter ? ` matching "${nameFilter}"` : ''} — ${projectSearched}`,
+      wrap: true,
+    },
+  ];
+  if (!documents || documents.length === 0) {
+    body.push({
+      type: 'TextBlock',
+      text: nameFilter
+        ? `No documents matching "${nameFilter}" on that project.`
+        : 'No documents on that project yet.',
+      spacing: 'Small',
+      isSubtle: true,
+    });
+    return attach(baseCard(body));
+  }
+  for (const d of documents) {
+    body.push({
+      type: 'Container',
+      spacing: 'Small',
+      separator: true,
+      items: [
+        {
+          type: 'ColumnSet',
+          columns: [
+            {
+              type: 'Column',
+              width: 'stretch',
+              items: [
+                {
+                  type: 'TextBlock',
+                  text: `**${d.documentName || d.fileName || 'Document'}**`,
+                  wrap: true,
+                },
+                {
+                  type: 'TextBlock',
+                  text: `${d.projectName || ''}${d.version != null ? ` · v${d.version}` : ''}${d.uploadedAt ? ` · ${formatMD(d.uploadedAt)}` : ''}${d.hasProof ? ` · proof ${d.proofStatus || 'pending'}` : ''}`,
+                  spacing: 'None',
+                  isSubtle: true,
+                  size: 'Small',
+                  wrap: true,
+                },
+              ],
+            },
+            d.documentUrl
+              ? {
+                  type: 'Column',
+                  width: 'auto',
+                  verticalContentAlignment: 'Center',
+                  items: [
+                    {
+                      type: 'ActionSet',
+                      actions: [{ type: 'Action.OpenUrl', title: 'Open', url: d.documentUrl }],
+                    },
+                  ],
+                }
+              : { type: 'Column', width: 'auto', items: [] },
+          ],
+        },
+      ],
+    });
+  }
+  return attach(baseCard(body));
+}
+
+// ---------- Scheduled messages card ("what reminders do you have") ----------
+function buildSchedulesCard({ schedules }) {
+  const body = [
+    {
+      type: 'TextBlock',
+      size: 'Large',
+      weight: 'Bolder',
+      text: '⏰ Scheduled in this chat',
+      wrap: true,
+    },
+  ];
+  if (!schedules || schedules.length === 0) {
+    body.push({
+      type: 'TextBlock',
+      text: 'Nothing scheduled here yet.',
+      spacing: 'Small',
+      isSubtle: true,
+    });
+    return attach(baseCard(body));
+  }
+  const kindLabels = {
+    'weekly-reviews-digest': '📅 Weekly digest',
+    'proof-due-countdown': '⏰ Proof-due countdown',
+    'reminder-text': '🔔 Reminder',
+  };
+  for (const s of schedules) {
+    const icon = kindLabels[s.messageKind] || '•';
+    const cadence = s.type === 'recurring' ? `cron: \`${s.cron}\`` : 'one-time';
+    body.push({
+      type: 'Container',
+      spacing: 'Small',
+      separator: true,
+      items: [
+        {
+          type: 'TextBlock',
+          text: `${icon} **${s.description || s.messageKind}**`,
+          wrap: true,
+        },
+        {
+          type: 'TextBlock',
+          text: `Next: ${s.nextRun || 'TBD'} · ${cadence} · id: \`${s.id}\``,
+          spacing: 'None',
+          isSubtle: true,
+          size: 'Small',
+          wrap: true,
+        },
+      ],
+    });
+  }
+  body.push({
+    type: 'TextBlock',
+    text: '_To cancel one, tell me "cancel the [name] schedule"._',
+    spacing: 'Medium',
+    isSubtle: true,
+    size: 'Small',
+    wrap: true,
+  });
+  return attach(baseCard(body));
+}
+
 module.exports = {
   buildAgendaCard,
   buildNotificationCard,
   buildProofReadinessCard,
   buildWorkloadCard,
+  buildDocumentsCard,
+  buildSchedulesCard,
   shortName,
   formatMD,
   channelLabel,

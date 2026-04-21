@@ -31,6 +31,8 @@ const {
   buildAgendaCard,
   buildProofReadinessCard,
   buildWorkloadCard,
+  buildDocumentsCard,
+  buildSchedulesCard,
 } = require('./lib/cards');
 
 // ---------- Bot Framework adapter ----------
@@ -746,6 +748,23 @@ async function executeTool(name, args, ctx) {
             hasProof: d.hasProof,
             proofStatus: d.proofStatus,
           }));
+        if (ctx && ctx.pendingCards) {
+          const card = buildDocumentsCard({
+            projectSearched: args.projectName,
+            nameFilter: args.documentName || null,
+            documents: matches,
+          });
+          ctx.pendingCards.push(card);
+          return {
+            _cardAttached: true,
+            projectSearched: args.projectName,
+            nameFilter: args.documentName || null,
+            count: matches.length,
+            instruction: matches.length === 0
+              ? 'No matches. Reply with one short sentence telling the user nothing was found.'
+              : 'Card attached with clickable documents. Your reply MUST be a one-line greeting only, no listing.',
+          };
+        }
         return {
           projectSearched: args.projectName,
           nameFilter: args.documentName || null,
@@ -908,17 +927,28 @@ async function executeTool(name, args, ctx) {
       case 'listSchedules': {
         if (!ctx || !ctx.conversationId) return { error: 'No conversation context' };
         const items = await listSchedulesForConv(ctx.conversationId);
+        const shaped = items.map(s => ({
+          id: s.id,
+          type: s.type,
+          description: s.description,
+          cron: s.cron,
+          nextRun: formatCT(s.nextRunAtMs),
+          messageKind: s.messageKind,
+          createdBy: s.createdBy,
+        }));
+        if (ctx && ctx.pendingCards) {
+          ctx.pendingCards.push(buildSchedulesCard({ schedules: shaped }));
+          return {
+            _cardAttached: true,
+            count: shaped.length,
+            instruction: shaped.length === 0
+              ? 'Reply briefly telling user nothing is scheduled yet.'
+              : 'Card attached listing schedules with IDs. Reply with one short sentence.',
+          };
+        }
         return {
-          count: items.length,
-          schedules: items.map(s => ({
-            id: s.id,
-            type: s.type,
-            description: s.description,
-            cron: s.cron,
-            nextRun: formatCT(s.nextRunAtMs),
-            messageKind: s.messageKind,
-            createdBy: s.createdBy,
-          })),
+          count: shaped.length,
+          schedules: shaped,
         };
       }
       case 'cancelSchedule': {

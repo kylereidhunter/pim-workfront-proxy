@@ -179,16 +179,55 @@ async function buildProofDueCountdown({ reviewType = 'creative', when = 'tomorro
   return msg;
 }
 
+// Build a full proactive-message activity ({text, attachments}) for a
+// scheduled message kind. Scheduled DMs now include Adaptive Cards just
+// like live tool responses. Text is kept as a fallback for clients that
+// don't render cards.
 async function buildMessage(kind, args) {
+  const { buildAgendaCard, buildProofReadinessCard } = require('./cards');
   switch (kind) {
-    case 'weekly-reviews-digest':
-      return buildWeeklyReviewsDigest(args || {});
-    case 'proof-due-countdown':
-      return buildProofDueCountdown(args || {});
+    case 'weekly-reviews-digest': {
+      const window = (args && args.window) || 'nextweek';
+      const text = await buildWeeklyReviewsDigest({ window });
+      // Build structured sections for the card from the same /reviews data.
+      const reviewTypes = ['creative', 'marketing', 'exec'];
+      const titleFor = { creative: 'Creative Review', marketing: 'Marketing Review', exec: 'Exec Review' };
+      const dateKeyFor = { creative: 'creativeReviewDate', marketing: 'marketingReviewDate', exec: 'execReviewDate' };
+      const sections = await Promise.all(
+        reviewTypes.map(async (t) => {
+          const r = await fetchJSON(`/reviews?reviewType=${t}&window=${window}`);
+          const projects = (r.projects || []).map(p => ({
+            name: p.name,
+            designer: p.designer,
+            copywriter: p.copywriter,
+            projectUrl: p.projectUrl,
+            channel: p.channel,
+            projectType: p.projectType,
+            reviewDate: p[dateKeyFor[t]],
+            dateLabel: p[dateKeyFor[t] + 'Label'],
+          }));
+          return { title: titleFor[t], projects };
+        })
+      );
+      const attachment = buildAgendaCard({ window, sections });
+      return { text, attachments: [attachment] };
+    }
+    case 'proof-due-countdown': {
+      const text = await buildProofDueCountdown(args || {});
+      const reviewType = (args && args.reviewType) || 'creative';
+      const windowParam = 'thisweek';
+      const readiness = await fetchJSON(`/proof-readiness?reviewType=${reviewType}&window=${windowParam}`);
+      const attachment = buildProofReadinessCard({
+        reviewType,
+        windowLabel: 'this week',
+        projects: readiness.projects || [],
+      });
+      return { text, attachments: [attachment] };
+    }
     case 'reminder-text':
-      return args && args.text ? args.text : '⏰ Reminder!';
+      return { text: args && args.text ? args.text : '⏰ Reminder!' };
     default:
-      return `⏰ Scheduled message fired (unknown kind: ${kind})`;
+      return { text: `⏰ Scheduled message fired (unknown kind: ${kind})` };
   }
 }
 

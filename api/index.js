@@ -1347,8 +1347,9 @@ module.exports = async (req, res) => {
           try {
             const ref = await getConversationRef(sched.conversationId);
             if (!ref) { scheduleResults.push({ id: sched.id, status: 'no-conv-ref' }); continue; }
-            const text = await buildMessage(sched.messageKind, sched.messageArgs);
-            await sendProactive(ref, text);
+            // buildMessage now returns {text, attachments?}
+            const activity = await buildMessage(sched.messageKind, sched.messageArgs);
+            await sendProactive(ref, activity);
             await markFired(sched.id);
             scheduleResults.push({ id: sched.id, status: 'sent' });
           } catch (err) {
