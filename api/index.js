@@ -346,18 +346,37 @@ module.exports = async (req, res) => {
       const sinceHours = Math.max(1, Math.min(168, Number(query.sinceHours) || 24));
       const since = new Date(Date.now() - sinceHours * 3600 * 1000).toISOString().slice(0, 10);
       const nameFilter = String(query.name || 'FY27');
-      // Step 1: get candidate project IDs
+      // activeDays: scope to projects with a review/live date within ±N days.
+      // 0 = no filter (use all matching projects). Default 60 keeps the
+      // per-project Update fetches bounded (~50-70 calls instead of ~188).
+      const activeDays = Math.max(0, Math.min(365, Number(query.activeDays) ?? 60));
+      // Step 1: get candidate projects with their review/live dates
       const projResult = await callWorkfront('proj/search', {
         name: nameFilter,
         name_Mod: 'contains',
         status: 'CUR',
-        fields: 'ID,name',
+        fields: 'ID,name,DE:Live Date,tasks:name,tasks:plannedCompletionDate',
         '$$LIMIT': '300',
       });
+      const allProjects = (extractReviewDates(projResult).data || []);
       const projectLookup = {};
-      (projResult.data || []).forEach(p => { projectLookup[p.ID] = p.name; });
-      const projIds = Object.keys(projectLookup);
-      if (!projIds.length) return res.status(200).json({ data: [] });
+      allProjects.forEach(p => { projectLookup[p.ID] = p.name; });
+      // Filter to "active" projects unless activeDays=0
+      let candidateProjects = allProjects;
+      if (activeDays > 0) {
+        const now = Date.now();
+        const minT = now - activeDays * 24 * 3600 * 1000;
+        const maxT = now + activeDays * 24 * 3600 * 1000;
+        candidateProjects = allProjects.filter(p => {
+          const dates = [p.creativeReviewDate, p.marketingReviewDate, p.execReviewDate, p.liveDate];
+          return dates.some(d => {
+            const dt = parseWFDate(d);
+            return dt && dt.getTime() >= minT && dt.getTime() <= maxT;
+          });
+        });
+      }
+      const projIds = candidateProjects.map(p => p.ID);
+      if (!projIds.length) return res.status(200).json({ data: [], count: 0 });
 
       // Step 2: Workfront notes can be attached directly to a project OR to
       // sub-objects (tasks, documents, proofs) within the project. Use
