@@ -363,7 +363,7 @@ module.exports = async (req, res) => {
       // sub-objects (tasks, documents, proofs) within the project. Use
       // topObjID (root object) instead of objID (direct parent) to catch
       // notes posted anywhere under a project — including the Updates tab.
-      const [noteTopRes, noteDirectRes] = await Promise.all([
+      const [noteTopRes, noteDirectRes, projWithNotes] = await Promise.all([
         callWorkfront('note/search', {
           topObjID: projIds.join(','),
           topObjID_Mod: 'in',
@@ -379,6 +379,11 @@ module.exports = async (req, res) => {
           entryDate_Mod: 'gte',
           fields: 'ID,entryDate,objID,topObjID,ownerID,owner:name,noteText',
           '$$LIMIT': '500',
+        }).catch(e => ({ error: e.message })),
+        // Fetch one project with ALL its nested collections to discover
+        // where Updates tab comments actually live.
+        callWorkfront(`proj/${projIds[0]}`, {
+          fields: 'ID,name,updates:*,notes:*,journal:*',
         }).catch(e => ({ error: e.message })),
       ]);
 
@@ -406,6 +411,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({
         noteTopError: noteTopRes && noteTopRes.error,
         noteDirectError: noteDirectRes && noteDirectRes.error,
+        projWithNotes: projWithNotes && (projWithNotes.data || projWithNotes),
         count: merged.length,
         data: merged,
       });
