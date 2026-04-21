@@ -363,55 +363,31 @@ module.exports = async (req, res) => {
       // sub-objects (tasks, documents, proofs) within the project. Use
       // topObjID (root object) instead of objID (direct parent) to catch
       // notes posted anywhere under a project — including the Updates tab.
-      const [noteTopRes, noteDirectRes, projWithNotes] = await Promise.all([
-        callWorkfront('note/search', {
-          topObjID: projIds.join(','),
-          topObjID_Mod: 'in',
-          entryDate: since,
-          entryDate_Mod: 'gte',
-          fields: 'ID,entryDate,objID,topObjID,ownerID,owner:name,noteText',
-          '$$LIMIT': '500',
-        }).catch(e => ({ error: e.message })),
-        callWorkfront('note/search', {
-          objID: projIds.join(','),
-          objID_Mod: 'in',
-          entryDate: since,
-          entryDate_Mod: 'gte',
-          fields: 'ID,entryDate,objID,topObjID,ownerID,owner:name,noteText',
-          '$$LIMIT': '500',
-        }).catch(e => ({ error: e.message })),
-        // Fetch one project with ALL its nested collections to discover
-        // where Updates tab comments actually live.
-        callWorkfront(`proj/${projIds[0]}`, {
-          fields: 'ID,name,updates:*,notes:*',
-        }).catch(e => ({ error: e.message })),
-      ]);
+      // Workfront's "Updates" tab stores user comments as UPDATE objects.
+      // Foreign key: topObjID (root project). Author: enteredByName (flat,
+      // not nested). Text: message.
+      const updateRes = await callWorkfront('update/search', {
+        topObjID: projIds.join(','),
+        topObjID_Mod: 'in',
+        entryDate: since,
+        entryDate_Mod: 'gte',
+        fields: 'ID,entryDate,message,enteredByID,enteredByName,topObjID,topObjCode,topName,updateObjCode,updateObjID,updateType',
+        '$$LIMIT': '500',
+      }).catch(e => ({ error: e.message }));
 
-      // Merge both note sets, dedupe by ID.
-      const mergedMap = new Map();
-      const absorb = (source, rows) => {
-        (rows || []).forEach(n => {
-          if (mergedMap.has(n.ID)) return;
-          const projID = n.topObjID || n.objID;
-          mergedMap.set(n.ID, {
-            source,
-            noteID: n.ID,
-            entryDate: n.entryDate,
-            projectID: projID,
-            projectName: projectLookup[projID] || null,
-            ownerName: n.owner ? n.owner.name : null,
-            text: n.noteText || '',
-          });
-        });
-      };
-      absorb('note-top', noteTopRes && noteTopRes.data);
-      absorb('note-direct', noteDirectRes && noteDirectRes.data);
-      const merged = [...mergedMap.values()];
+      const merged = (updateRes && updateRes.data || []).map(u => ({
+        source: 'update',
+        noteID: u.ID,
+        entryDate: u.entryDate,
+        projectID: u.topObjID,
+        projectName: projectLookup[u.topObjID] || u.topName || null,
+        ownerName: u.enteredByName || null,
+        text: u.message || '',
+        updateType: u.updateType,
+      }));
 
       return res.status(200).json({
-        noteTopError: noteTopRes && noteTopRes.error,
-        noteDirectError: noteDirectRes && noteDirectRes.error,
-        projWithNotes: projWithNotes && (projWithNotes.data || projWithNotes),
+        updateError: updateRes && updateRes.error,
         count: merged.length,
         data: merged,
       });
