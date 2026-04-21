@@ -296,20 +296,30 @@ async function detectAndNotify() {
           formatFor: () => buildDocPayload(ev, proj),
         });
       }
-      // Proof status change?
+      // Proof status change? Only notify on meaningful REVIEW outcomes
+      // (approved / rejected / changes requested / pending). Skip Workfront's
+      // internal proof-object lifecycle states (inprogress, success,
+      // processing, new, error, cancelled) — those churn every time a
+      // proof is generated and aren't user-actionable.
+      const INTERNAL_STATES = new Set(['inprogress', 'success', 'processing', 'new', 'error', 'cancelled', '']);
       if (d.hasProof && d.proofStatus !== prev.proofStatus) {
-        const affected = currentAssigneeNames(proj);
-        const ev = {
-          type: 'proof-status-change',
-          docName: d.name,
-          from: prev.proofStatus,
-          to: d.proofStatus,
-        };
-        events.push({
-          projectID: proj.ID,
-          affected,
-          formatFor: () => buildDocPayload(ev, proj),
-        });
+        const fromLC = String(prev.proofStatus || '').toLowerCase();
+        const toLC = String(d.proofStatus || '').toLowerCase();
+        const isMeaningful = !INTERNAL_STATES.has(toLC);
+        if (isMeaningful) {
+          const affected = currentAssigneeNames(proj);
+          const ev = {
+            type: 'proof-status-change',
+            docName: d.name,
+            from: INTERNAL_STATES.has(fromLC) ? 'pending' : prev.proofStatus,
+            to: d.proofStatus,
+          };
+          events.push({
+            projectID: proj.ID,
+            affected,
+            formatFor: () => buildDocPayload(ev, proj),
+          });
+        }
       }
       await r.set(`snap:doc:${d.docID}`, JSON.stringify(curr));
     }
