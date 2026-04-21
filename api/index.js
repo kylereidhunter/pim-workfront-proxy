@@ -369,7 +369,7 @@ module.exports = async (req, res) => {
           topObjID_Mod: 'in',
           entryDate: since,
           entryDate_Mod: 'gte',
-          fields: 'ID,entryDate,objID,topObjID,ownerID,owner:name,noteText,objObjCode',
+          fields: 'ID,entryDate,objID,topObjID,ownerID,owner:name,noteText',
           '$$LIMIT': '500',
         }).catch(e => ({ error: e.message })),
         callWorkfront('note/search', {
@@ -377,7 +377,7 @@ module.exports = async (req, res) => {
           objID_Mod: 'in',
           entryDate: since,
           entryDate_Mod: 'gte',
-          fields: 'ID,entryDate,objID,topObjID,ownerID,owner:name,noteText,objObjCode',
+          fields: 'ID,entryDate,objID,topObjID,ownerID,owner:name,noteText',
           '$$LIMIT': '500',
         }).catch(e => ({ error: e.message })),
       ]);
@@ -396,7 +396,6 @@ module.exports = async (req, res) => {
             projectName: projectLookup[projID] || null,
             ownerName: n.owner ? n.owner.name : null,
             text: n.noteText || '',
-            attachedTo: n.objObjCode || null,
           });
         });
       };
