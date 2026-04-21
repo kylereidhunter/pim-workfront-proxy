@@ -376,7 +376,7 @@ module.exports = async (req, res) => {
           objID_Mod: 'in',
           entryDate: since,
           entryDate_Mod: 'gte',
-          fields: 'ID,entryDate,objID,objObjCode,editedByID,editedBy:name,numberOfReplies,description',
+          fields: 'ID,entryDate,objID,objObjCode,editedByID,editedBy:name,description',
           '$$LIMIT': '500',
         }).catch(e => ({ error: e.message })),
       ]);
