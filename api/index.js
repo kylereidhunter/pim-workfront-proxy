@@ -376,8 +376,8 @@ module.exports = async (req, res) => {
           objID_Mod: 'in',
           entryDate: since,
           entryDate_Mod: 'gte',
-          fields: 'ID,entryDate,objID,objObjCode,editedByID,editedBy:name,description',
-          '$$LIMIT': '500',
+          fields: '*',
+          '$$LIMIT': '20',
         }).catch(e => ({ error: e.message })),
       ]);
 
@@ -396,12 +396,13 @@ module.exports = async (req, res) => {
       (journalRes && journalRes.data || []).forEach(j => {
         merged.push({
           source: 'journalentry',
+          raw: j, // <-- diagnostic: include raw fields until we know schema
           noteID: j.ID,
           entryDate: j.entryDate,
           projectID: j.objID,
           projectName: projectLookup[j.objID] || null,
           ownerName: j.editedBy ? j.editedBy.name : null,
-          text: j.description || '',
+          text: j.description || j.entryDesc || j.message || '',
         });
       });
 
