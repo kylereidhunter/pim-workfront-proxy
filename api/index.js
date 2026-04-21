@@ -383,7 +383,7 @@ module.exports = async (req, res) => {
         // Fetch one project with ALL its nested collections to discover
         // where Updates tab comments actually live.
         callWorkfront(`proj/${projIds[0]}`, {
-          fields: 'ID,name,updates:*,notes:*,journal:*',
+          fields: 'ID,name,updates:*,notes:*',
         }).catch(e => ({ error: e.message })),
       ]);
 
