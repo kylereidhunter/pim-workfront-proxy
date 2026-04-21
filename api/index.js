@@ -359,75 +359,54 @@ module.exports = async (req, res) => {
       const projIds = Object.keys(projectLookup);
       if (!projIds.length) return res.status(200).json({ data: [] });
 
-      // Step 2: fetch from note, journalentry, AND update endpoints.
-      // Workfront's "Updates" tab actually stores user comments as `update`
-      // objects. journalentry is the audit trail. note is for direct notes.
-      const [noteRes, journalRes, updateRes] = await Promise.all([
+      // Step 2: Workfront notes can be attached directly to a project OR to
+      // sub-objects (tasks, documents, proofs) within the project. Use
+      // topObjID (root object) instead of objID (direct parent) to catch
+      // notes posted anywhere under a project — including the Updates tab.
+      const [noteTopRes, noteDirectRes] = await Promise.all([
+        callWorkfront('note/search', {
+          topObjID: projIds.join(','),
+          topObjID_Mod: 'in',
+          entryDate: since,
+          entryDate_Mod: 'gte',
+          fields: 'ID,entryDate,objID,topObjID,ownerID,owner:name,noteText,objObjCode',
+          '$$LIMIT': '500',
+        }).catch(e => ({ error: e.message })),
         callWorkfront('note/search', {
           objID: projIds.join(','),
           objID_Mod: 'in',
           entryDate: since,
           entryDate_Mod: 'gte',
-          fields: 'ID,entryDate,objID,ownerID,owner:name,noteText',
+          fields: 'ID,entryDate,objID,topObjID,ownerID,owner:name,noteText,objObjCode',
           '$$LIMIT': '500',
-        }).catch(e => ({ error: e.message })),
-        callWorkfront('journalentry/search', {
-          objID: projIds.join(','),
-          objID_Mod: 'in',
-          entryDate: since,
-          entryDate_Mod: 'gte',
-          fields: '*',
-          '$$LIMIT': '20',
-        }).catch(e => ({ error: e.message })),
-        callWorkfront('update/search', {
-          entryDate: since,
-          entryDate_Mod: 'gte',
-          fields: '*',
-          '$$LIMIT': '5',
         }).catch(e => ({ error: e.message })),
       ]);
 
-      const merged = [];
-      (noteRes && noteRes.data || []).forEach(n => {
-        merged.push({
-          source: 'note',
-          noteID: n.ID,
-          entryDate: n.entryDate,
-          projectID: n.objID,
-          projectName: projectLookup[n.objID] || null,
-          ownerName: n.owner ? n.owner.name : null,
-          text: n.noteText || '',
+      // Merge both note sets, dedupe by ID.
+      const mergedMap = new Map();
+      const absorb = (source, rows) => {
+        (rows || []).forEach(n => {
+          if (mergedMap.has(n.ID)) return;
+          const projID = n.topObjID || n.objID;
+          mergedMap.set(n.ID, {
+            source,
+            noteID: n.ID,
+            entryDate: n.entryDate,
+            projectID: projID,
+            projectName: projectLookup[projID] || null,
+            ownerName: n.owner ? n.owner.name : null,
+            text: n.noteText || '',
+            attachedTo: n.objObjCode || null,
+          });
         });
-      });
-      (journalRes && journalRes.data || []).forEach(j => {
-        merged.push({
-          source: 'journalentry',
-          raw: j,
-          noteID: j.ID,
-          entryDate: j.entryDate,
-          projectID: j.objID,
-          projectName: projectLookup[j.objID] || null,
-          ownerName: j.editedBy ? j.editedBy.name : null,
-          text: j.description || j.entryDesc || j.message || '',
-        });
-      });
-      (updateRes && updateRes.data || []).forEach(u => {
-        merged.push({
-          source: 'update',
-          raw: u,
-          noteID: u.ID,
-          entryDate: u.entryDate,
-          projectID: u.objID,
-          projectName: projectLookup[u.objID] || null,
-          ownerName: (u.enteredBy && u.enteredBy.name) || (u.owner && u.owner.name) || (u.editedBy && u.editedBy.name) || null,
-          text: u.message || u.description || u.updateText || '',
-        });
-      });
+      };
+      absorb('note-top', noteTopRes && noteTopRes.data);
+      absorb('note-direct', noteDirectRes && noteDirectRes.data);
+      const merged = [...mergedMap.values()];
 
       return res.status(200).json({
-        noteError: noteRes && noteRes.error,
-        journalError: journalRes && journalRes.error,
-        updateError: updateRes && updateRes.error,
+        noteTopError: noteTopRes && noteTopRes.error,
+        noteDirectError: noteDirectRes && noteDirectRes.error,
         count: merged.length,
         data: merged,
       });
