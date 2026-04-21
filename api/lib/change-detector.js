@@ -372,8 +372,11 @@ async function detectAndNotify() {
       try {
         const ref = await getConversationRef(sub.conversationId);
         if (!ref) { sendResults.push({ user: sub.userName, status: 'no-ref' }); continue; }
+        // If a card is attached, skip the text — Teams renders BOTH as
+        // separate messages, so including the text produces duplicate
+        // notifications. Card alone carries the content.
         const activity = attachment
-          ? { text, attachments: [attachment] }
+          ? { attachments: [attachment] }
           : { text };
         await sendProactive(ref, activity);
         summary.notificationsSent++;

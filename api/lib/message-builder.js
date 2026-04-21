@@ -188,8 +188,7 @@ async function buildMessage(kind, args) {
   switch (kind) {
     case 'weekly-reviews-digest': {
       const window = (args && args.window) || 'nextweek';
-      const text = await buildWeeklyReviewsDigest({ window });
-      // Build structured sections for the card from the same /reviews data.
+      // Build structured sections for the card from /reviews data.
       const reviewTypes = ['creative', 'marketing', 'exec'];
       const titleFor = { creative: 'Creative Review', marketing: 'Marketing Review', exec: 'Exec Review' };
       const dateKeyFor = { creative: 'creativeReviewDate', marketing: 'marketingReviewDate', exec: 'execReviewDate' };
@@ -210,10 +209,10 @@ async function buildMessage(kind, args) {
         })
       );
       const attachment = buildAgendaCard({ window, sections });
-      return { text, attachments: [attachment] };
+      // Card-only: Teams renders text + attachment as separate messages.
+      return { attachments: [attachment] };
     }
     case 'proof-due-countdown': {
-      const text = await buildProofDueCountdown(args || {});
       const reviewType = (args && args.reviewType) || 'creative';
       const windowParam = 'thisweek';
       const readiness = await fetchJSON(`/proof-readiness?reviewType=${reviewType}&window=${windowParam}`);
@@ -222,7 +221,7 @@ async function buildMessage(kind, args) {
         windowLabel: 'this week',
         projects: readiness.projects || [],
       });
-      return { text, attachments: [attachment] };
+      return { attachments: [attachment] };
     }
     case 'reminder-text':
       return { text: args && args.text ? args.text : '⏰ Reminder!' };

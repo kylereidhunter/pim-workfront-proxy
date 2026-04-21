@@ -1117,12 +1117,15 @@ async function handlePimMessage(context) {
     }
 
     // No more tool calls — send Pim's final reply.
-    // If a tool attached an Adaptive Card, include it on the same activity.
+    // If a tool attached an Adaptive Card, send the card ALONE (Teams
+    // renders text + attachments as separate messages, so including text
+    // would produce a duplicate). The card header is Pim's voice anyway.
     const reply = msg.content || "Hmm, I'm drawing a blank on that one — can you rephrase?";
-    const activity = pendingCards.length
-      ? { text: reply, attachments: pendingCards }
-      : reply;
-    await context.sendActivity(activity);
+    if (pendingCards.length) {
+      await context.sendActivity({ attachments: pendingCards });
+    } else {
+      await context.sendActivity(reply);
+    }
     await appendTurn(conversationId, { userMessage, assistantMessage: reply });
     return;
   }
