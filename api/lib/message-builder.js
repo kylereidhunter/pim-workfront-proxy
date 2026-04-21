@@ -29,15 +29,18 @@ function labelChannel(proj) {
   const ch = String(chRaw || '').toLowerCase();
   const type = String(proj.projectType || '').toLowerCase();
   const name = String(proj.name || '').toLowerCase();
-  if (type.includes('loyalty') || name.includes('loyalty')) return 'Loyalty';
-  // Email is the primary channel when present, even if it's bundled with text/push.
-  if (ch.includes('email')) return 'Email';
-  if (ch.includes('text') || ch.includes('sms') || ch.includes('push')) return 'Text/Push';
-  if (ch.includes('direct mail')) return 'Direct Mail';
-  if (ch.includes('paid media')) return 'Paid Media';
-  if (ch.includes('organic social')) return 'Social';
-  if (ch.includes('website')) return 'Web';
-  if (ch.includes('insider')) return 'Loyalty';
+  if (type.includes('loyalty') || name.includes('loyalty') || ch.includes('insider')) return 'Loyalty';
+  // Multi-channel projects ("Email/SMS/Push" etc) get every matching token
+  // listed — Text/Push projects shouldn't be silently labeled "Email".
+  const parts = [];
+  if (ch.includes('email')) parts.push('Email');
+  if (ch.includes('text') || ch.includes('sms') || ch.includes('push')) parts.push('Text/Push');
+  if (ch.includes('direct mail')) parts.push('Direct Mail');
+  if (ch.includes('paid media')) parts.push('Paid Media');
+  if (ch.includes('organic social') || ch.includes('social')) parts.push('Social');
+  if (ch.includes('website') || ch.includes('web')) parts.push('Web');
+  if (ch.includes('in store') || ch.includes('in-store')) parts.push('In-Store');
+  if (parts.length) return parts.join(' + ');
   if (Array.isArray(chRaw) && chRaw.length) return String(chRaw[0]);
   if (chRaw) return String(chRaw);
   return '';

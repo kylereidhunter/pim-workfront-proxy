@@ -39,18 +39,24 @@ function formatMD(dateStr) {
 }
 
 function channelLabel(proj) {
-  const ch = String(proj.channel || '').toLowerCase();
+  const chRaw = proj.channel;
+  const ch = String(chRaw || '').toLowerCase();
   const type = String(proj.projectType || '').toLowerCase();
   const name = String(proj.name || '').toLowerCase();
   if (type.includes('loyalty') || name.includes('loyalty')) return 'Loyalty';
-  if (ch.includes('email')) return 'Email';
-  if (ch.includes('text') || ch.includes('sms') || ch.includes('push')) return 'Text/Push';
-  if (ch.includes('direct mail')) return 'Direct Mail';
-  if (ch.includes('paid media')) return 'Paid Media';
-  if (ch.includes('organic social')) return 'Social';
-  if (ch.includes('website')) return 'Web';
-  if (Array.isArray(proj.channel) && proj.channel.length) return String(proj.channel[0]);
-  return proj.channel ? String(proj.channel) : '';
+  // Multi-channel projects like "Email/SMS/Push" get ALL their matching
+  // tokens listed so Text/Push work isn't masked as just "Email".
+  const parts = [];
+  if (ch.includes('email')) parts.push('Email');
+  if (ch.includes('text') || ch.includes('sms') || ch.includes('push')) parts.push('Text/Push');
+  if (ch.includes('direct mail')) parts.push('Direct Mail');
+  if (ch.includes('paid media')) parts.push('Paid Media');
+  if (ch.includes('organic social') || ch.includes('social')) parts.push('Social');
+  if (ch.includes('website') || ch.includes('web')) parts.push('Web');
+  if (ch.includes('in store') || ch.includes('in-store')) parts.push('In-Store');
+  if (parts.length) return parts.join(' + ');
+  if (Array.isArray(chRaw) && chRaw.length) return String(chRaw[0]);
+  return chRaw ? String(chRaw) : '';
 }
 
 function projectRow(p, opts = {}) {
