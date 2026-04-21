@@ -335,12 +335,13 @@ module.exports = async (req, res) => {
       });
     }
 
-    // GET /updates?name=FY27&sinceHours=24 — journal notes on matching
-    // projects' Updates tab. Default window: last 24 hours.
+    // GET /updates?name=FY27&sinceHours=24 — "Updates tab" entries on
+    // matching projects. Default window: last 24 hours.
     //
-    // Workfront's note/search rejects objCode=PROJ as a search parameter,
-    // so instead we: (1) fetch FY27 project IDs, (2) query notes with
-    // objID_Mod=in filtered to those IDs. Two calls, reliable results.
+    // Workfront's Updates tab stores entries as BOTH:
+    //   - note (direct notes attached to projects/docs/tasks)
+    //   - journalentry (system + user activity stream, includes "commented")
+    // We query both and merge, scoped by project ID.
     else if (path === '/updates' || path === '/updates/') {
       const sinceHours = Math.max(1, Math.min(168, Number(query.sinceHours) || 24));
       const since = new Date(Date.now() - sinceHours * 3600 * 1000).toISOString().slice(0, 10);
@@ -357,26 +358,59 @@ module.exports = async (req, res) => {
       (projResult.data || []).forEach(p => { projectLookup[p.ID] = p.name; });
       const projIds = Object.keys(projectLookup);
       if (!projIds.length) return res.status(200).json({ data: [] });
-      // Step 2: fetch notes scoped to those project IDs
-      const result = await callWorkfront('note/search', {
-        objID: projIds.join(','),
-        objID_Mod: 'in',
-        entryDate: since,
-        entryDate_Mod: 'gte',
-        fields: 'ID,entryDate,objID,ownerID,owner:name,noteText',
-        '$$LIMIT': '500',
-      });
-      if (result.data) {
-        result.data = result.data.map(n => ({
+
+      // Step 2: fetch BOTH note and journalentry in parallel.
+      // journalentry uses `objID` for the project ID too. `entryDate` field.
+      // Field for text is `description` or similar on journal entries.
+      const [noteRes, journalRes] = await Promise.all([
+        callWorkfront('note/search', {
+          objID: projIds.join(','),
+          objID_Mod: 'in',
+          entryDate: since,
+          entryDate_Mod: 'gte',
+          fields: 'ID,entryDate,objID,ownerID,owner:name,noteText',
+          '$$LIMIT': '500',
+        }).catch(e => ({ error: e.message })),
+        callWorkfront('journalentry/search', {
+          objID: projIds.join(','),
+          objID_Mod: 'in',
+          entryDate: since,
+          entryDate_Mod: 'gte',
+          fields: 'ID,entryDate,objID,objObjCode,editedByID,editedBy:name,numberOfReplies,description',
+          '$$LIMIT': '500',
+        }).catch(e => ({ error: e.message })),
+      ]);
+
+      const merged = [];
+      (noteRes && noteRes.data || []).forEach(n => {
+        merged.push({
+          source: 'note',
           noteID: n.ID,
           entryDate: n.entryDate,
           projectID: n.objID,
           projectName: projectLookup[n.objID] || null,
           ownerName: n.owner ? n.owner.name : null,
           text: n.noteText || '',
-        }));
-      }
-      return res.status(200).json(result);
+        });
+      });
+      (journalRes && journalRes.data || []).forEach(j => {
+        merged.push({
+          source: 'journalentry',
+          noteID: j.ID,
+          entryDate: j.entryDate,
+          projectID: j.objID,
+          projectName: projectLookup[j.objID] || null,
+          ownerName: j.editedBy ? j.editedBy.name : null,
+          text: j.description || '',
+        });
+      });
+
+      return res.status(200).json({
+        noteError: noteRes && noteRes.error,
+        journalError: journalRes && journalRes.error,
+        count: merged.length,
+        data: merged,
+      });
     }
 
     // GET /proofs?name=WK15
