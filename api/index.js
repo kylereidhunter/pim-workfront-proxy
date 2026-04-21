@@ -380,12 +380,10 @@ module.exports = async (req, res) => {
           '$$LIMIT': '20',
         }).catch(e => ({ error: e.message })),
         callWorkfront('update/search', {
-          objID: projIds.join(','),
-          objID_Mod: 'in',
           entryDate: since,
           entryDate_Mod: 'gte',
           fields: '*',
-          '$$LIMIT': '20',
+          '$$LIMIT': '5',
         }).catch(e => ({ error: e.message })),
       ]);
 
