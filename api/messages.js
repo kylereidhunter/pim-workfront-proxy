@@ -662,7 +662,7 @@ async function executeTool(name, args, ctx) {
         const result = await callProxy(`/workload?${q}`);
         if (ctx && ctx.pendingCards) {
           const windowLabel = args.window === 'nextweek' ? 'Next Week' : args.window === 'thisweek' ? 'This Week' : (args.window || 'Next Week');
-          let card;
+          let card, stripped;
           if (result && result.person) {
             card = buildWorkloadCard({
               windowLabel,
@@ -670,15 +670,23 @@ async function executeTool(name, args, ctx) {
               personTotal: result.total,
               personBreakdown: { designer: result.designer, copywriter: result.copywriter, pm: result.pm },
             });
+            stripped = {
+              _cardAttached: true,
+              person: result.person,
+              total: result.total,
+              instruction: 'Card attached with breakdown. Reply = one short sentence, no numbers/rehashing.',
+            };
           } else if (result && result.leaderboard) {
-            card = buildWorkloadCard({
-              windowLabel,
-              leaderboard: result.leaderboard,
-            });
+            card = buildWorkloadCard({ windowLabel, leaderboard: result.leaderboard });
+            stripped = {
+              _cardAttached: true,
+              totalPeople: result.totalPeople,
+              instruction: 'Card attached with the leaderboard. Reply = one short sentence, no names/counts.',
+            };
           }
           if (card) {
             ctx.pendingCards.push(card);
-            result._cardAttached = true;
+            return stripped;
           }
         }
         return result;
@@ -697,7 +705,6 @@ async function executeTool(name, args, ctx) {
         if (args.endDate) q.set('endDate', args.endDate);
         if (args.person) q.set('person', args.person);
         const result = await callProxy(`/proof-readiness?${q}`);
-        // Attach a card rendering the readiness view
         if (result && result.projects && ctx && ctx.pendingCards) {
           const card = buildProofReadinessCard({
             reviewType: args.reviewType,
@@ -706,7 +713,14 @@ async function executeTool(name, args, ctx) {
             personLabel: args.person || null,
           });
           ctx.pendingCards.push(card);
-          result._cardAttached = true;
+          // Strip the project list so the LLM can't re-render it.
+          return {
+            _cardAttached: true,
+            reviewType: result.reviewType,
+            total: result.total,
+            needsProofCount: result.needsProofCount,
+            instruction: `Card with the list has been attached. Your reply MUST be a single short sentence greeting only. Do NOT list projects, do NOT repeat counts beyond a casual mention. Card shows everything.`,
+          };
         }
         return result;
       }
@@ -742,13 +756,12 @@ async function executeTool(name, args, ctx) {
       case 'getUpcomingReviews':
         return await callProxy(`/upcoming-reviews?name=${encodeURIComponent(args.name || 'FY27')}`);
       case 'getReviewsDigest': {
-        // Build both text (fallback) and a rich Adaptive Card for Teams.
+        // Build a rich Adaptive Card attachment + return ONLY a terse
+        // summary to the LLM so it can't paste a pre-rendered markdown
+        // digest into its reply.
         const window = args.window || 'thisweek';
         const reviewType = args.reviewType;
         const person = args.person;
-        const { buildWeeklyReviewsDigest } = require('./lib/message-builder');
-        const text = await buildWeeklyReviewsDigest({ window, reviewType, person });
-        // Fetch structured data for the card
         const reviewTypes = reviewType ? [reviewType] : ['creative', 'marketing', 'exec'];
         const dateKeyFor = {
           creative: 'creativeReviewDate',
@@ -778,13 +791,19 @@ async function executeTool(name, args, ctx) {
             return { title: titleFor[t], projects };
           })
         );
+        const total = sections.reduce((s, sec) => s + sec.projects.length, 0);
         const card = buildAgendaCard({
           window,
           sections,
           personLabel: person || null,
         });
         if (ctx && ctx.pendingCards) ctx.pendingCards.push(card);
-        return { window, reviewType, person, text, _cardAttached: true };
+        return {
+          _cardAttached: true,
+          totalProjects: total,
+          byType: Object.fromEntries(reviewTypes.map((t, i) => [t, sections[i].projects.length])),
+          instruction: `Card with the full list has been attached. Your reply MUST be a single short sentence greeting only (e.g. "Here's what's on deck 👇"). Do NOT list any projects, do NOT add headers, do NOT repeat any data — the card shows everything.`,
+        };
       }
       case 'getReviewsInWindow': {
         const q = new URLSearchParams();
