@@ -18,11 +18,13 @@ function buildAdapter() {
   return new CloudAdapter(auth);
 }
 
-async function sendProactive(conversationReference, text) {
+async function sendProactive(conversationReference, textOrActivity) {
   const adapter = buildAdapter();
   const appId = process.env.MICROSOFT_APP_ID;
   await adapter.continueConversationAsync(appId, conversationReference, async (context) => {
-    await context.sendActivity(text);
+    // Accept either a plain string or an activity-shaped object
+    // ({ text, attachments }). Bot Framework's sendActivity handles both.
+    await context.sendActivity(textOrActivity);
   });
 }
 

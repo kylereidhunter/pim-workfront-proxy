@@ -27,6 +27,11 @@ const {
   appendTurn,
   clearHistory,
 } = require('./lib/conversation-history');
+const {
+  buildAgendaCard,
+  buildProofReadinessCard,
+  buildWorkloadCard,
+} = require('./lib/cards');
 
 // ---------- Bot Framework adapter ----------
 // Microsoft's recommended wiring: build the credentials factory from env vars,
@@ -141,7 +146,7 @@ If a project has a review date in the requested window, include it regardless of
 HOW TO FIND REVIEWS FOR A DATE RANGE:
 
 **SCOPE — always use \`getReviewsDigest\`:**
-Every review-listing question goes through \`getReviewsDigest\`. It pre-formats the whole answer — you output the \`text\` field VERBATIM (a one-line greeting above it is fine). Do NOT call \`getReviewsInWindow\` for rendering. Do NOT re-format, truncate, or summarize — the digest IS the answer.
+Every review-listing question goes through \`getReviewsDigest\`. The tool attaches an Adaptive Card to your reply automatically, AND returns a text version. When \`_cardAttached: true\` is in the response, your text reply should be a **one-line greeting** only (e.g. "Here's what's on deck 👇" or "Next week's lineup —") — the card carries the actual content. Do NOT paste the \`text\` field in your reply when \`_cardAttached: true\`. Do NOT call \`getReviewsInWindow\` for rendering.
 
 Map the user's ask to these args:
 - **Unscoped** ("reviews this week", "review schedule", "what's going through reviews") → \`{ window }\`. Returns all three reviews grouped.
@@ -223,9 +228,9 @@ REVIEW SCHEDULE REFERENCE (typical):
 (Always use actual dates from Workfront — this is just a sanity check.)
 
 WORKLOAD QUESTIONS:
-- "What's [person]'s load next week?" / "is [person] slammed?" → \`getWorkload({person: 'Meagan', window: 'nextweek'})\`. Show their total count, role breakdown, and list their projects.
-- "Who's got the most this week?" / "who's slammed?" / "workload rundown" → \`getWorkload({window: 'thisweek'})\` (no person). Show the leaderboard, top 5-8 people.
-- When showing a personal load, lead with the total ("You've got 7 projects going to reviews next week") and break down by role and dates.
+- "What's [person]'s load next week?" / "is [person] slammed?" → \`getWorkload({person: 'Meagan', window: 'nextweek'})\`.
+- "Who's got the most this week?" / "who's slammed?" / "workload rundown" → \`getWorkload({window: 'thisweek'})\` (no person).
+- The tool attaches an Adaptive Card when \`_cardAttached: true\`. Keep your text reply to ONE short sentence — the card shows the leaderboard or the per-person breakdown. Do NOT duplicate the info in markdown.
 
 REVIEW MEETING PREP:
 - "Prep me for Tuesday's CR" / "summarize Wednesday's MKT" / "what do I need for exec review next week?" → \`getMeetingPrep({reviewType, window})\`.
@@ -234,7 +239,7 @@ REVIEW MEETING PREP:
 - If a project has no recent comments, say so (not worth padding with fake detail).
 
 CHECKING PROOF READINESS:
-When the user asks "which projects still need a proof?", "who hasn't posted a proof for CR?", "what's missing proofs for marketing review next week?", etc. — ALWAYS call \`checkProofsForReview\` with the relevant reviewType + window. The server does the real analysis (does a proof exist? has a new version been posted since the previous review?) — the response tells you per project: \`needsProof: true|false\`, \`reason\`, \`latestProofVersionAt\`, \`previousReviewDate\`, and \`proofDocs\`.
+When the user asks "which projects still need a proof?", "who hasn't posted a proof for CR?", "what's missing proofs for marketing review next week?", etc. — ALWAYS call \`checkProofsForReview\` with the relevant reviewType + window. The tool attaches an Adaptive Card automatically when \`_cardAttached: true\` — when that's true, keep your text reply to ONE short sentence (e.g. "Here's the rundown —" or "X projects still need a proof:") and let the card carry the list. Do NOT re-list the projects in markdown.
 
 - Default scope: if the user doesn't specify a single review, check ALL three reviews in the window (three calls, one per reviewType). Group the "needs proof" output by reviewType.
 - **"My projects" / "of mine" / "I'm on"** → pass \`person: "<user's first name>"\` to EVERY checkProofsForReview call. Server filters to projects where that person is Designer/Copywriter/PM. If the user says "my" and a review type has zero matches, write "Nothing of yours on [review type] [window]" — don't list other people's projects.
@@ -654,7 +659,29 @@ async function executeTool(name, args, ctx) {
         const q = new URLSearchParams();
         if (args.person) q.set('person', args.person);
         if (args.window) q.set('window', args.window);
-        return await callProxy(`/workload?${q}`);
+        const result = await callProxy(`/workload?${q}`);
+        if (ctx && ctx.pendingCards) {
+          const windowLabel = args.window === 'nextweek' ? 'Next Week' : args.window === 'thisweek' ? 'This Week' : (args.window || 'Next Week');
+          let card;
+          if (result && result.person) {
+            card = buildWorkloadCard({
+              windowLabel,
+              person: result.person,
+              personTotal: result.total,
+              personBreakdown: { designer: result.designer, copywriter: result.copywriter, pm: result.pm },
+            });
+          } else if (result && result.leaderboard) {
+            card = buildWorkloadCard({
+              windowLabel,
+              leaderboard: result.leaderboard,
+            });
+          }
+          if (card) {
+            ctx.pendingCards.push(card);
+            result._cardAttached = true;
+          }
+        }
+        return result;
       }
       case 'getMeetingPrep': {
         const q = new URLSearchParams();
@@ -669,7 +696,19 @@ async function executeTool(name, args, ctx) {
         if (args.startDate) q.set('startDate', args.startDate);
         if (args.endDate) q.set('endDate', args.endDate);
         if (args.person) q.set('person', args.person);
-        return await callProxy(`/proof-readiness?${q}`);
+        const result = await callProxy(`/proof-readiness?${q}`);
+        // Attach a card rendering the readiness view
+        if (result && result.projects && ctx && ctx.pendingCards) {
+          const card = buildProofReadinessCard({
+            reviewType: args.reviewType,
+            windowLabel: args.window === 'nextweek' ? 'next week' : args.window === 'thisweek' ? 'this week' : (args.window || ''),
+            projects: result.projects,
+            personLabel: args.person || null,
+          });
+          ctx.pendingCards.push(card);
+          result._cardAttached = true;
+        }
+        return result;
       }
       case 'findProjectDocuments': {
         const docs = await callProxy(`/docs?name=${encodeURIComponent(args.projectName)}`);
@@ -703,13 +742,49 @@ async function executeTool(name, args, ctx) {
       case 'getUpcomingReviews':
         return await callProxy(`/upcoming-reviews?name=${encodeURIComponent(args.name || 'FY27')}`);
       case 'getReviewsDigest': {
+        // Build both text (fallback) and a rich Adaptive Card for Teams.
+        const window = args.window || 'thisweek';
+        const reviewType = args.reviewType;
+        const person = args.person;
         const { buildWeeklyReviewsDigest } = require('./lib/message-builder');
-        const text = await buildWeeklyReviewsDigest({
-          window: args.window || 'thisweek',
-          reviewType: args.reviewType,
-          person: args.person,
+        const text = await buildWeeklyReviewsDigest({ window, reviewType, person });
+        // Fetch structured data for the card
+        const reviewTypes = reviewType ? [reviewType] : ['creative', 'marketing', 'exec'];
+        const dateKeyFor = {
+          creative: 'creativeReviewDate',
+          marketing: 'marketingReviewDate',
+          exec: 'execReviewDate',
+        };
+        const titleFor = {
+          creative: 'Creative Review',
+          marketing: 'Marketing Review',
+          exec: 'Exec Review',
+        };
+        const sections = await Promise.all(
+          reviewTypes.map(async (t) => {
+            const q = new URLSearchParams({ reviewType: t, window });
+            if (person) q.set('person', person);
+            const r = await callProxy(`/reviews?${q}`);
+            const projects = (r.projects || []).map(p => ({
+              name: p.name,
+              designer: p.designer,
+              copywriter: p.copywriter,
+              projectUrl: p.projectUrl,
+              channel: p.channel,
+              projectType: p.projectType,
+              reviewDate: p[dateKeyFor[t]],
+              dateLabel: p[dateKeyFor[t] + 'Label'],
+            }));
+            return { title: titleFor[t], projects };
+          })
+        );
+        const card = buildAgendaCard({
+          window,
+          sections,
+          personLabel: person || null,
         });
-        return { window: args.window || 'thisweek', reviewType: args.reviewType, person: args.person, text };
+        if (ctx && ctx.pendingCards) ctx.pendingCards.push(card);
+        return { window, reviewType, person, text, _cardAttached: true };
       }
       case 'getReviewsInWindow': {
         const q = new URLSearchParams();
@@ -873,7 +948,8 @@ async function handlePimMessage(context) {
   // "Kyle Hunter" → "Kyle" — first name for matching against DE:Lead Designer / Copywriter.
   const firstName = fromName.split(' ')[0] || '';
   const conversationId = context.activity.conversation && context.activity.conversation.id;
-  const toolCtx = { conversationId, userName: fromName };
+  const pendingCards = [];
+  const toolCtx = { conversationId, userName: fromName, pendingCards };
 
   const userContext =
     `USER CONTEXT (authoritative — overrides any example name in the system prompt):\n` +
@@ -944,9 +1020,13 @@ async function handlePimMessage(context) {
       continue;
     }
 
-    // No more tool calls — send Pim's final reply
+    // No more tool calls — send Pim's final reply.
+    // If a tool attached an Adaptive Card, include it on the same activity.
     const reply = msg.content || "Hmm, I'm drawing a blank on that one — can you rephrase?";
-    await context.sendActivity(reply);
+    const activity = pendingCards.length
+      ? { text: reply, attachments: pendingCards }
+      : reply;
+    await context.sendActivity(activity);
     await appendTurn(conversationId, { userMessage, assistantMessage: reply });
     return;
   }

@@ -15,6 +15,7 @@
 const { Redis } = require('@upstash/redis');
 const { listEnabled, normName } = require('./subscriptions');
 const { sendProactive } = require('./proactive');
+const { buildNotificationCard, shortName: cardShortName } = require('./cards');
 
 const PROXY_BASE = process.env.PROXY_BASE_URL || 'https://pim-workfront-proxy.vercel.app';
 const TRACKED_PROJECT_FIELDS = [
@@ -110,50 +111,84 @@ function affectedForChange(change, currProj) {
   return currentAssigneeNames(currProj);
 }
 
-function buildProjectChangeText(change, currProj, recipientName) {
+// Each build* returns { text, attachment } — text is the fallback / what a
+// client without card support would see; attachment is the Adaptive Card.
+function buildProjectChangePayload(change, currProj, recipientName) {
   const proj = shortName(currProj.name);
   const url = currProj.projectUrl;
   const openLink = url ? ` — [Open in Workfront](${url})` : '';
+  let emoji, headline, subline, text;
   if (isAssigneeField(change.field)) {
     const role = fieldLabel(change.field);
     if (change.to && normName(change.to) === normName(recipientName)) {
-      return `📌 You were just assigned as **${role}** on **${proj}**${openLink}`;
+      emoji = '📌'; headline = `You were just assigned as ${role}`;
+      subline = null;
+      text = `📌 You were just assigned as **${role}** on **${proj}**${openLink}`;
+    } else if (change.from && normName(change.from) === normName(recipientName)) {
+      emoji = '🔄'; headline = `You were removed as ${role}`;
+      subline = change.to ? `Replaced by ${change.to}` : null;
+      text = `🔄 You were removed as **${role}** on **${proj}**${change.to ? ` — now ${change.to}` : ''}${openLink}`;
+    } else {
+      emoji = '🔁'; headline = `${role} changed`;
+      subline = `${change.from || 'unset'} → ${change.to || 'TBD'}`;
+      text = `🔁 **${role}** on **${proj}** changed to **${change.to || 'TBD'}** (prev: ${change.from || 'unset'})${openLink}`;
     }
-    if (change.from && normName(change.from) === normName(recipientName)) {
-      const replaced = change.to ? ` — now ${change.to}` : '';
-      return `🔄 You were removed as **${role}** on **${proj}**${replaced}${openLink}`;
-    }
-    const who = change.to || 'TBD';
-    return `🔁 **${role}** on **${proj}** changed to **${who}** (prev: ${change.from || 'unset'})${openLink}`;
+  } else {
+    const label = fieldLabel(change.field);
+    emoji = '📅'; headline = `${label} moved`;
+    subline = `${formatDate(change.from)} → ${formatDate(change.to)}`;
+    text = `📅 **${label}** for **${proj}** moved from _${formatDate(change.from)}_ to _${formatDate(change.to)}_${openLink}`;
   }
-  const label = fieldLabel(change.field);
-  return `📅 **${label}** for **${proj}** moved from _${formatDate(change.from)}_ to _${formatDate(change.to)}_${openLink}`;
+  const attachment = buildNotificationCard({ emoji, headline, subline, projectName: proj, url });
+  return { text, attachment };
 }
 
-function buildDocText(event, currProj) {
+function buildDocPayload(event, currProj) {
   const proj = shortName(currProj.name);
   const url = currProj.projectUrl;
   const openLink = url ? ` — [Open in Workfront](${url})` : '';
+  let emoji, headline, subline, text;
   switch (event.type) {
     case 'doc-uploaded':
-      return `📎 New document **${event.fileName || event.docName}** uploaded to **${proj}**${openLink}`;
+      emoji = '📎'; headline = 'New document uploaded';
+      subline = event.fileName || event.docName || '';
+      text = `📎 New document **${event.fileName || event.docName}** uploaded to **${proj}**${openLink}`;
+      break;
     case 'proof-version-bump':
-      return `🆕 New proof version (v${event.version}) on **${event.docName}** (project **${proj}**)${openLink}`;
+      emoji = '🆕'; headline = `New proof version (v${event.version})`;
+      subline = event.docName || '';
+      text = `🆕 New proof version (v${event.version}) on **${event.docName}** (project **${proj}**)${openLink}`;
+      break;
     case 'proof-status-change':
-      return `🔎 Proof status on **${event.docName}** (project **${proj}**) changed: _${event.from || 'pending'}_ → **${event.to || 'updated'}**${openLink}`;
+      emoji = '🔎'; headline = `Proof status changed: ${event.from || 'pending'} → ${event.to || 'updated'}`;
+      subline = event.docName || '';
+      text = `🔎 Proof status on **${event.docName}** (project **${proj}**) changed: _${event.from || 'pending'}_ → **${event.to || 'updated'}**${openLink}`;
+      break;
     default:
-      return `Document update on **${proj}**${openLink}`;
+      emoji = '🔔'; headline = 'Document update';
+      subline = null;
+      text = `Document update on **${proj}**${openLink}`;
   }
+  const attachment = buildNotificationCard({ emoji, headline, subline, projectName: proj, url });
+  return { text, attachment };
 }
 
-function buildCommentText(note, currProj) {
+function buildCommentPayload(note, currProj) {
   const proj = shortName(currProj.name);
   const url = currProj.projectUrl;
   const openLink = url ? ` — [Open in Workfront](${url})` : '';
   const author = note.ownerName || 'someone';
   const snippet = String(note.text || '').replace(/\s+/g, ' ').slice(0, 200);
   const suffix = snippet.length < String(note.text || '').length ? '…' : '';
-  return `💬 **${author}** commented on **${proj}**: _"${snippet}${suffix}"_${openLink}`;
+  const text = `💬 **${author}** commented on **${proj}**: _"${snippet}${suffix}"_${openLink}`;
+  const attachment = buildNotificationCard({
+    emoji: '💬',
+    headline: `${author} commented`,
+    subline: `"${snippet}${suffix}"`,
+    projectName: proj,
+    url,
+  });
+  return { text, attachment };
 }
 
 async function detectAndNotify() {
@@ -214,7 +249,7 @@ async function detectAndNotify() {
           projectID: proj.ID,
           change: ch,
           affected,
-          formatFor: (name) => buildProjectChangeText(ch, proj, name),
+          formatFor: (name) => buildProjectChangePayload(ch, proj, name),
         });
       }
       if (changes.length) await r.set(`snap:project:${proj.ID}`, JSON.stringify(curr));
@@ -245,7 +280,7 @@ async function detectAndNotify() {
           events.push({
             projectID: proj.ID,
             affected,
-            formatFor: () => buildDocText(ev, proj),
+            formatFor: () => buildDocPayload(ev, proj),
           });
         }
         await r.set(`snap:doc:${d.docID}`, JSON.stringify(curr));
@@ -258,7 +293,7 @@ async function detectAndNotify() {
         events.push({
           projectID: proj.ID,
           affected,
-          formatFor: () => buildDocText(ev, proj),
+          formatFor: () => buildDocPayload(ev, proj),
         });
       }
       // Proof status change?
@@ -273,7 +308,7 @@ async function detectAndNotify() {
         events.push({
           projectID: proj.ID,
           affected,
-          formatFor: () => buildDocText(ev, proj),
+          formatFor: () => buildDocPayload(ev, proj),
         });
       }
       await r.set(`snap:doc:${d.docID}`, JSON.stringify(curr));
@@ -311,7 +346,7 @@ async function detectAndNotify() {
         events.push({
           projectID: proj.ID,
           affected,
-          formatFor: () => buildCommentText(note, proj),
+          formatFor: () => buildCommentPayload(note, proj),
         });
       }
       if (fresh.length) await r.set(`snap:notes:${projID}`, new Date(maxTs).toISOString());
@@ -327,7 +362,9 @@ async function detectAndNotify() {
     for (const name of ev.affected) {
       const sub = subsByName.get(normName(name));
       if (!sub || !sub.enabled || !sub.conversationId) continue;
-      const text = ev.formatFor(sub.userName);
+      const payload = ev.formatFor(sub.userName);
+      const text = typeof payload === 'string' ? payload : payload.text;
+      const attachment = typeof payload === 'object' ? payload.attachment : null;
       const key = `${sub.conversationId}|${text}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -335,7 +372,10 @@ async function detectAndNotify() {
       try {
         const ref = await getConversationRef(sub.conversationId);
         if (!ref) { sendResults.push({ user: sub.userName, status: 'no-ref' }); continue; }
-        await sendProactive(ref, text);
+        const activity = attachment
+          ? { text, attachments: [attachment] }
+          : { text };
+        await sendProactive(ref, activity);
         summary.notificationsSent++;
         sendResults.push({ user: sub.userName, status: 'sent' });
       } catch (err) {
