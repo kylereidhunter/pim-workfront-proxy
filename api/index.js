@@ -273,44 +273,108 @@ module.exports = async (req, res) => {
       return res.status(200).json(result);
     }
 
+    // GET /active-docs?name=FY27&activeDays=60 — docs for projects that have
+    // a review or live date within the next/past N days. Used by the change
+    // detector to catch doc uploads / proof version bumps / proof status
+    // changes on CURRENT projects. (The regular /docs endpoint is capped at
+    // 500 docs and skews old, so it misses recent uploads on active projects.)
+    //
+    // Strategy: get FY27 projects with at least one review/live date within
+    // the window, then fetch their docs in parallel via project:ID filter.
+    else if (path === '/active-docs' || path === '/active-docs/') {
+      const activeDays = Math.max(7, Math.min(180, Number(query.activeDays) || 60));
+      const now = Date.now();
+      const minTime = now - activeDays * 24 * 3600 * 1000;
+      const maxTime = now + activeDays * 24 * 3600 * 1000;
+      const projRaw = await callWorkfront('proj/search', {
+        name: query.name || 'FY27',
+        name_Mod: 'contains',
+        status: 'CUR',
+        fields: 'name,status,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,owner:name,tasks:name,tasks:plannedCompletionDate',
+        '$$LIMIT': '300',
+      });
+      const allProjects = (extractReviewDates(projRaw).data || []);
+      const isActive = (p) => {
+        const dates = [p.creativeReviewDate, p.marketingReviewDate, p.execReviewDate, p.liveDate];
+        return dates.some(d => {
+          const dt = parseWFDate(d);
+          return dt && dt.getTime() >= minTime && dt.getTime() <= maxTime;
+        });
+      };
+      const activeProjects = allProjects.filter(isActive);
+      // Parallel per-project doc fetches
+      const docResults = await Promise.all(
+        activeProjects.map(p =>
+          callWorkfront('docu/search', {
+            'project:ID': p.ID,
+            fields: 'ID,name,lastUpdateDate,project:ID,project:name,currentVersion:ID,currentVersion:version,currentVersion:entryDate,currentVersion:proofID,currentVersion:proofStatus,currentVersion:proofDecision,currentVersion:fileName',
+            '$$LIMIT': '100',
+          }).catch(() => ({ data: [] }))
+        )
+      );
+      const docs = docResults.flatMap((res, i) =>
+        (res && res.data || []).map(d => ({
+          docID: d.ID,
+          name: d.name,
+          lastUpdateDate: d.lastUpdateDate,
+          projectID: activeProjects[i].ID,
+          projectName: activeProjects[i].name,
+          version: d.currentVersion ? d.currentVersion.version : null,
+          versionEntryDate: d.currentVersion ? d.currentVersion.entryDate : null,
+          fileName: d.currentVersion ? d.currentVersion.fileName : null,
+          proofID: d.currentVersion ? d.currentVersion.proofID : null,
+          proofStatus: d.currentVersion ? d.currentVersion.proofStatus : null,
+          proofDecision: d.currentVersion ? d.currentVersion.proofDecision : null,
+          hasProof: !!(d.currentVersion && d.currentVersion.proofID),
+        }))
+      );
+      return res.status(200).json({
+        activeProjectCount: activeProjects.length,
+        docCount: docs.length,
+        data: docs,
+      });
+    }
+
     // GET /updates?name=FY27&sinceHours=24 — journal notes on matching
     // projects' Updates tab. Default window: last 24 hours.
+    //
+    // Workfront's note/search rejects objCode=PROJ as a search parameter,
+    // so instead we: (1) fetch FY27 project IDs, (2) query notes with
+    // objID_Mod=in filtered to those IDs. Two calls, reliable results.
     else if (path === '/updates' || path === '/updates/') {
       const sinceHours = Math.max(1, Math.min(168, Number(query.sinceHours) || 24));
       const since = new Date(Date.now() - sinceHours * 3600 * 1000).toISOString().slice(0, 10);
+      const nameFilter = String(query.name || 'FY27');
+      // Step 1: get candidate project IDs
+      const projResult = await callWorkfront('proj/search', {
+        name: nameFilter,
+        name_Mod: 'contains',
+        status: 'CUR',
+        fields: 'ID,name',
+        '$$LIMIT': '300',
+      });
+      const projectLookup = {};
+      (projResult.data || []).forEach(p => { projectLookup[p.ID] = p.name; });
+      const projIds = Object.keys(projectLookup);
+      if (!projIds.length) return res.status(200).json({ data: [] });
+      // Step 2: fetch notes scoped to those project IDs
       const result = await callWorkfront('note/search', {
-        objCode: 'PROJ',
+        objID: projIds.join(','),
+        objID_Mod: 'in',
         entryDate: since,
         entryDate_Mod: 'gte',
         fields: 'ID,entryDate,objID,ownerID,owner:name,noteText',
         '$$LIMIT': '500',
       });
-      // Filter client-side to only notes whose project matches the name query.
-      // Workfront's note/search won't filter by project name directly.
-      if (result.data && query.name) {
-        const nameFilter = String(query.name).toLowerCase();
-        // Need project names for each note's objID. Do a batched proj lookup.
-        const objIds = [...new Set(result.data.map(n => n.objID).filter(Boolean))];
-        const projectLookup = {};
-        if (objIds.length) {
-          const projResult = await callWorkfront('proj/search', {
-            ID: objIds.join(','),
-            ID_Mod: 'in',
-            fields: 'ID,name',
-            '$$LIMIT': String(objIds.length + 10),
-          });
-          (projResult.data || []).forEach(p => { projectLookup[p.ID] = p.name; });
-        }
-        result.data = result.data
-          .map(n => ({
-            noteID: n.ID,
-            entryDate: n.entryDate,
-            projectID: n.objID,
-            projectName: projectLookup[n.objID] || null,
-            ownerName: n.owner ? n.owner.name : null,
-            text: n.noteText || '',
-          }))
-          .filter(n => n.projectName && n.projectName.toLowerCase().includes(nameFilter));
+      if (result.data) {
+        result.data = result.data.map(n => ({
+          noteID: n.ID,
+          entryDate: n.entryDate,
+          projectID: n.objID,
+          projectName: projectLookup[n.objID] || null,
+          ownerName: n.owner ? n.owner.name : null,
+          text: n.noteText || '',
+        }));
       }
       return res.status(200).json(result);
     }
@@ -587,7 +651,6 @@ module.exports = async (req, res) => {
       // Fetch recent notes in last 14 days for these projects
       const since = new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString().slice(0, 10);
       const noteRaw = await callWorkfront('note/search', {
-        objCode: 'PROJ',
         objID: projects.map(p => p.ID).join(','),
         objID_Mod: 'in',
         entryDate: since,

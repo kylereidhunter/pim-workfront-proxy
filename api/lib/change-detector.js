@@ -173,10 +173,14 @@ async function detectAndNotify() {
   const { getConversationRef } = require('./schedule-store');
 
   // --- Fetch current state ---
+  // /active-docs does per-project fetches for projects with a review/live
+  // date within ±60 days — catches doc uploads / proof bumps / proof status
+  // on CURRENT projects. /docs alone misses them because it caps at 500
+  // and skews old.
   const [projectsRes, docsRes, notesRes] = await Promise.all([
-    fetchJSON('/upcoming-reviews?name=FY27').catch(e => ({ error: e.message })),
-    fetchJSON('/docs?name=FY27').catch(e => ({ error: e.message })),
-    fetchJSON('/updates?name=FY27&sinceHours=24').catch(e => ({ error: e.message })),
+    fetchJSON('/upcoming-reviews?name=FY27').catch(e => ({ error: String(e && e.message || e) })),
+    fetchJSON('/active-docs?name=FY27&activeDays=60').catch(e => ({ error: String(e && e.message || e) })),
+    fetchJSON('/updates?name=FY27&sinceHours=24').catch(e => ({ error: String(e && e.message || e) })),
   ]);
   if (projectsRes.error) summary.errors.push(`projects: ${projectsRes.error}`);
   if (docsRes.error) summary.errors.push(`docs: ${docsRes.error}`);
