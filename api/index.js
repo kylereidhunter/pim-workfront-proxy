@@ -359,10 +359,10 @@ module.exports = async (req, res) => {
       const projIds = Object.keys(projectLookup);
       if (!projIds.length) return res.status(200).json({ data: [] });
 
-      // Step 2: fetch BOTH note and journalentry in parallel.
-      // journalentry uses `objID` for the project ID too. `entryDate` field.
-      // Field for text is `description` or similar on journal entries.
-      const [noteRes, journalRes] = await Promise.all([
+      // Step 2: fetch from note, journalentry, AND update endpoints.
+      // Workfront's "Updates" tab actually stores user comments as `update`
+      // objects. journalentry is the audit trail. note is for direct notes.
+      const [noteRes, journalRes, updateRes] = await Promise.all([
         callWorkfront('note/search', {
           objID: projIds.join(','),
           objID_Mod: 'in',
@@ -372,6 +372,14 @@ module.exports = async (req, res) => {
           '$$LIMIT': '500',
         }).catch(e => ({ error: e.message })),
         callWorkfront('journalentry/search', {
+          objID: projIds.join(','),
+          objID_Mod: 'in',
+          entryDate: since,
+          entryDate_Mod: 'gte',
+          fields: '*',
+          '$$LIMIT': '20',
+        }).catch(e => ({ error: e.message })),
+        callWorkfront('update/search', {
           objID: projIds.join(','),
           objID_Mod: 'in',
           entryDate: since,
@@ -396,7 +404,7 @@ module.exports = async (req, res) => {
       (journalRes && journalRes.data || []).forEach(j => {
         merged.push({
           source: 'journalentry',
-          raw: j, // <-- diagnostic: include raw fields until we know schema
+          raw: j,
           noteID: j.ID,
           entryDate: j.entryDate,
           projectID: j.objID,
@@ -405,10 +413,23 @@ module.exports = async (req, res) => {
           text: j.description || j.entryDesc || j.message || '',
         });
       });
+      (updateRes && updateRes.data || []).forEach(u => {
+        merged.push({
+          source: 'update',
+          raw: u,
+          noteID: u.ID,
+          entryDate: u.entryDate,
+          projectID: u.objID,
+          projectName: projectLookup[u.objID] || null,
+          ownerName: (u.enteredBy && u.enteredBy.name) || (u.owner && u.owner.name) || (u.editedBy && u.editedBy.name) || null,
+          text: u.message || u.description || u.updateText || '',
+        });
+      });
 
       return res.status(200).json({
         noteError: noteRes && noteRes.error,
         journalError: journalRes && journalRes.error,
+        updateError: updateRes && updateRes.error,
         count: merged.length,
         data: merged,
       });
