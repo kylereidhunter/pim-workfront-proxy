@@ -366,32 +366,39 @@ module.exports = async (req, res) => {
       // Workfront's "Updates" tab stores user comments as UPDATE objects.
       // Foreign key: topObjID (root project). Author: enteredByName (flat,
       // not nested). Text: message.
-      // update/search filters: topObjID alone (no _Mod=in), topObjCode=PROJ.
-      // Running one search per project in parallel since topObjID_Mod=in
-      // gets silently rejected.
-      const updateResults = await Promise.all(
-        projIds.slice(0, 200).map(pid =>
-          callWorkfront('update/search', {
-            topObjID: pid,
-            topObjCode: 'PROJ',
-            entryDate: since,
-            entryDate_Mod: 'gte',
-            fields: 'ID,entryDate,message,enteredByID,enteredByName,topObjID,topObjCode,topName,updateObjCode,updateObjID,updateType',
-            '$$LIMIT': '200',
+      // Workfront's update/search won't return results even when the data
+      // exists. The nested `updates:*` collection on a project DOES work.
+      // So: fetch each project with updates:*, extract updates per project.
+      const sinceMs = new Date(since).getTime();
+      const projResults = await Promise.all(
+        projIds.map(pid =>
+          callWorkfront(`proj/${pid}`, {
+            fields: 'ID,name,updates:*',
           }).catch(e => ({ error: e.message }))
         )
       );
       const updateRes = {
-        data: updateResults.flatMap(r => (r && r.data) || []),
-        error: updateResults.find(r => r && r.error && (typeof r.error === 'string' ? r.error : r.error.message))?.error || null,
+        data: projResults.flatMap(res => {
+          const proj = res && res.data;
+          if (!proj) return [];
+          const updates = Array.isArray(proj.updates) ? proj.updates : [];
+          return updates
+            .filter(u => {
+              if (!u.entryDate) return true;
+              const ts = new Date(String(u.entryDate).replace(/(\d{2}):(\d{3})/, '$1.$2')).getTime();
+              return isNaN(ts) ? true : ts >= sinceMs;
+            })
+            .map(u => ({ ...u, _topProjectID: proj.ID, _topProjectName: proj.name }));
+        }),
+        error: null,
       };
 
       const merged = (updateRes && updateRes.data || []).map(u => ({
         source: 'update',
         noteID: u.ID,
         entryDate: u.entryDate,
-        projectID: u.topObjID,
-        projectName: projectLookup[u.topObjID] || u.topName || null,
+        projectID: u._topProjectID || u.topObjID,
+        projectName: u._topProjectName || projectLookup[u._topProjectID || u.topObjID] || u.topName || null,
         ownerName: u.enteredByName || null,
         text: u.message || '',
         updateType: u.updateType,
