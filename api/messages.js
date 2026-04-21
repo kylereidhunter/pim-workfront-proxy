@@ -813,7 +813,54 @@ async function executeTool(name, args, ctx) {
         if (args.endDate) q.set('endDate', args.endDate);
         if (args.channel) q.set('channel', args.channel);
         if (args.person) q.set('person', args.person);
-        return await callProxy(`/reviews?${q}`);
+        const result = await callProxy(`/reviews?${q}`);
+        // Also attach an agenda card so the UX is identical regardless of
+        // which review tool Pim decides to call. Strip the projects array
+        // from the response so the LLM can't render it itself.
+        if (result && Array.isArray(result.projects) && ctx && ctx.pendingCards
+            && (args.reviewType && args.reviewType !== 'any')
+            && args.window) {
+          const dateKeyFor = {
+            creative: 'creativeReviewDate',
+            marketing: 'marketingReviewDate',
+            mkt: 'marketingReviewDate',
+            exec: 'execReviewDate',
+          };
+          const titleFor = {
+            creative: 'Creative Review',
+            marketing: 'Marketing Review',
+            mkt: 'Marketing Review',
+            exec: 'Exec Review',
+          };
+          const dk = dateKeyFor[args.reviewType];
+          const section = {
+            title: titleFor[args.reviewType],
+            projects: result.projects.map(p => ({
+              name: p.name,
+              designer: p.designer,
+              copywriter: p.copywriter,
+              projectUrl: p.projectUrl,
+              channel: p.channel,
+              projectType: p.projectType,
+              reviewDate: p[dk],
+              dateLabel: p[dk + 'Label'],
+            })),
+          };
+          const card = buildAgendaCard({
+            window: args.window,
+            sections: [section],
+            personLabel: args.person || null,
+          });
+          ctx.pendingCards.push(card);
+          return {
+            _cardAttached: true,
+            reviewType: args.reviewType,
+            window: args.window,
+            count: result.count,
+            instruction: 'Card attached with the full list. Your reply MUST be a one-line greeting only. Do NOT list, format, or summarize the projects.',
+          };
+        }
+        return result;
       }
       case 'scheduleRecurring': {
         if (!ctx || !ctx.conversationId) return { error: 'No conversation context' };
