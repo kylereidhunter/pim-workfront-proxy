@@ -145,6 +145,13 @@ CHANNELS (all are in scope — never drop one):
 - Loyalty projects — identified by \`projectType\` containing "Loyalty" or the project name containing "Loyalty".
 If a project has a review date in the requested window, include it regardless of channel. Group or label by channel if helpful, but never silently omit.
 
+LOOKING UP DATES FOR A SPECIFIC PROJECT:
+When the user asks about a date on a SPECIFIC named project ("when is exec review for Americana Summer?", "when does Chat Sets go live?", "what's the MKT date for Patriotic Porch?"):
+- Call \`searchProjects\` with that name (fuzzy matching handles multi-word queries and space/underscore differences).
+- Read the relevant field directly off the matching project — \`creativeReviewDate\`, \`marketingReviewDate\`, \`execReviewDate\`, or \`liveDate\` — and use the pre-formatted \`*DateLabel\` for display.
+- Do NOT filter by window. If the user asks "when is exec review for X" and its exec review is next Thursday, just say so. A window filter would incorrectly drop it.
+- If \`searchProjects\` returns zero matches, tell the user you couldn't find that project and suggest they try a different keyword. Do NOT try any other tool first — the fuzzy match already did the heavy lifting.
+
 HOW TO FIND REVIEWS FOR A DATE RANGE:
 
 **SCOPE — always use \`getReviewsDigest\`:**

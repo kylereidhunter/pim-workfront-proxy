@@ -54,6 +54,42 @@ function parseWFDate(s) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// Multi-case, multi-word fuzzy search helper for Workfront's
+// name_Mod=contains (which is case-sensitive literal substring).
+// Given a user query like "chat set email", tries the longest word in
+// original/Title/UPPER case to pull a candidate set from Workfront,
+// then client-side filters to projects whose normalized name contains
+// ALL query words. Handles underscore/space/hyphen equivalence.
+//
+// Usage: await fuzzyFindProjects(userQuery, workfrontFetcher)
+//   workfrontFetcher: (searchTerm) => Promise<{data: [...]}>
+async function fuzzyFindProjects(userQuery, workfrontFetcher) {
+  const raw = String(userQuery || '').trim();
+  if (!raw) return { data: [], queryWords: [] };
+  const normalize = (s) => String(s || '').toLowerCase().replace(/[_\-\s]+/g, ' ').trim();
+  const queryWords = normalize(raw).split(' ').filter(Boolean);
+  const rawWords = raw.replace(/[_\-]+/g, ' ').split(/\s+/).filter(Boolean);
+  const longestRaw = rawWords.sort((a, b) => b.length - a.length)[0] || raw;
+  const candidates = [longestRaw];
+  const tc = longestRaw.charAt(0).toUpperCase() + longestRaw.slice(1).toLowerCase();
+  if (tc !== longestRaw) candidates.push(tc);
+  const uc = longestRaw.toUpperCase();
+  if (uc !== longestRaw && uc !== tc) candidates.push(uc);
+  let result = { data: [] };
+  for (const c of candidates) {
+    result = await workfrontFetcher(c);
+    if (result && result.data && result.data.length) break;
+  }
+  // Client-side: all query words must appear in normalized project name.
+  if (result && result.data && queryWords.length) {
+    result.data = result.data.filter(p => {
+      const nm = normalize(p.name || (p.project && p.project.name) || '');
+      return queryWords.every(w => nm.includes(w));
+    });
+  }
+  return { ...result, queryWords };
+}
+
 // Format a Workfront date as "Tue 4/21" in Central Time. Returns null if
 // the date is missing or unparsable.
 function formatReviewDateLabel(s) {
@@ -180,13 +216,17 @@ module.exports = async (req, res) => {
   try {
     // GET /search?name=FY27
     if (path === '/search' || path === '/search/') {
-      const result = await callWorkfront('proj/search', {
-        name: query.name || 'FY27',
-        name_Mod: 'contains',
-        status: query.status || 'CUR',
-        fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Proof URL,DE:Project Type,owner:name,tasks:name,tasks:plannedCompletionDate',
-        '$$LIMIT': '200'
-      });
+      // Fuzzy name match: "chat set email" matches "Chat Sets and Patio
+      // Party-Email" by splitting into words and requiring all to appear.
+      const result = await fuzzyFindProjects(query.name || 'FY27', (term) =>
+        callWorkfront('proj/search', {
+          name: term,
+          name_Mod: 'contains',
+          status: query.status || 'CUR',
+          fields: 'name,status,plannedStartDate,plannedCompletionDate,DE:Creative Due Date,DE:Live Date,DE:Lead Designer,DE:Lead Copywriter,DE:Fiscal Weeks,DE:Channel,DE:Proof URL,DE:Project Type,owner:name,tasks:name,tasks:plannedCompletionDate',
+          '$$LIMIT': '200',
+        })
+      );
       return res.status(200).json(extractReviewDates(result));
     }
 
@@ -432,26 +472,46 @@ module.exports = async (req, res) => {
 
     // GET /proofs?name=WK15
     else if (path === '/proofs' || path === '/proofs/') {
-      const result = await callWorkfront('docu/search', {
-        'project:name': query.name || 'FY27',
-        'project:name_Mod': 'contains',
-        'currentVersion:proofID_Mod': 'notnull',
-        fields: 'name,project:name,currentVersion:proofID,currentVersion:proofStatus,currentVersion:proofDecision,currentVersion:proofStatusDate,currentVersion:fileName',
-        '$$LIMIT': '100'
-      });
-      if (result.data) {
-        result.data = result.data.map(doc => ({
-          documentName: doc.name,
-          projectName: doc.project ? doc.project.name : 'N/A',
-          fileName: doc.currentVersion ? doc.currentVersion.fileName : 'N/A',
-          proofID: doc.currentVersion ? doc.currentVersion.proofID : null,
-          proofStatus: doc.currentVersion ? doc.currentVersion.proofStatus : 'no proof',
-          proofDecision: doc.currentVersion ? doc.currentVersion.proofDecision : 'N/A',
-          proofStatusDate: doc.currentVersion ? doc.currentVersion.proofStatusDate : null,
-          hasProof: !!(doc.currentVersion && doc.currentVersion.proofID)
-        }));
-      }
-      return res.status(200).json(result);
+      // First, fuzzy-match project names to get IDs (so "WK18 6-1 Americana
+      // Summer-Email" finds the actual "FY27_WK 18_6-1_Americana Summer-
+      // Email" project).
+      const projectMatches = await fuzzyFindProjects(query.name || 'FY27', (term) =>
+        callWorkfront('proj/search', {
+          name: term,
+          name_Mod: 'contains',
+          status: 'CUR',
+          fields: 'ID,name',
+          '$$LIMIT': '200',
+        })
+      );
+      const matchedIds = (projectMatches.data || []).map(p => p.ID).filter(Boolean);
+      if (matchedIds.length === 0) return res.status(200).json({ data: [] });
+      // Then fetch proof docs per project (Workfront's docu/search nested
+      // ID filters don't work reliably — per-project parallel queries do).
+      const docResults = await Promise.all(
+        matchedIds.slice(0, 50).map(async (pid) => {
+          const r = await callWorkfront('docu/search', {
+            'project:ID': pid,
+            'currentVersion:proofID_Mod': 'notnull',
+            fields: 'ID,name,project:ID,project:name,currentVersion:proofID,currentVersion:proofStatus,currentVersion:proofDecision,currentVersion:proofStatusDate,currentVersion:fileName',
+            '$$LIMIT': '100',
+          }).catch(() => ({ data: [] }));
+          return (r && r.data) || [];
+        })
+      );
+      const docs = docResults.flat().map(doc => ({
+        documentName: doc.name,
+        projectName: doc.project ? doc.project.name : 'N/A',
+        projectID: doc.project ? doc.project.ID : null,
+        projectUrl: doc.project && doc.project.ID ? projectUrlFor(doc.project.ID) : null,
+        fileName: doc.currentVersion ? doc.currentVersion.fileName : 'N/A',
+        proofID: doc.currentVersion ? doc.currentVersion.proofID : null,
+        proofStatus: doc.currentVersion ? doc.currentVersion.proofStatus : 'no proof',
+        proofDecision: doc.currentVersion ? doc.currentVersion.proofDecision : 'N/A',
+        proofStatusDate: doc.currentVersion ? doc.currentVersion.proofStatusDate : null,
+        hasProof: !!(doc.currentVersion && doc.currentVersion.proofID),
+      }));
+      return res.status(200).json({ data: docs });
     }
 
     // GET /my-projects?assignee=name
