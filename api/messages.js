@@ -752,10 +752,17 @@ async function executeTool(name, args, ctx) {
       case 'findProjectDocuments': {
         const docs = await callProxy(`/docs?name=${encodeURIComponent(args.projectName)}`);
         if (!docs || !docs.data) return docs;
-        const filterLower = (args.documentName || '').toLowerCase();
+        const filterLower = (args.documentName || '').toLowerCase().trim();
+        // "proof" / "proofs" / "the proof" etc. — Workfront proofs are
+        // flagged by hasProof=true, NOT by the word "proof" in the doc
+        // name (proof docs are usually named after the project, not "proof"
+        // literally). Fall back to name match for other filters like "SKU"
+        // or "brief".
+        const isProofQuery = /\bproofs?\b/.test(filterLower);
         let matches = docs.data
           .filter(d => {
             if (!filterLower) return true;
+            if (isProofQuery) return !!d.hasProof;
             const n = String(d.name || '').toLowerCase();
             const f = String(d.fileName || '').toLowerCase();
             return n.includes(filterLower) || f.includes(filterLower);
