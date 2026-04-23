@@ -457,7 +457,7 @@ const tools = [
     type: 'function',
     function: {
       name: 'findProjectDocuments',
-      description: 'Find documents attached to a Workfront project. Use this for "send me the SKU list for [project]", "grab the brief for [project]", "what docs are on [project]?", etc. Returns documents with a Workfront URL the user can click to view/download. Each result has a documentUrl plus metadata (filename, version, upload date).',
+      description: 'Find documents attached to a Workfront project. Use this for "send me the SKU list for [project]", "grab the brief for [project]", "send me the proof for [project]", etc. By default, when a documentName filter is supplied, returns only the MOST RECENT doc per project (users usually want the latest version — Workfront shows older versions on the doc detail page). Pass latestOnly=false to get every match.',
       parameters: {
         type: 'object',
         properties: {
@@ -468,6 +468,10 @@ const tools = [
           documentName: {
             type: 'string',
             description: 'Optional — filter documents by name. E.g. "SKU", "brief", "proof". Matched case-insensitively against the document name or filename. Omit to list all documents on the project.',
+          },
+          latestOnly: {
+            type: 'boolean',
+            description: 'When documentName is supplied, return only the newest document per project (default true). Pass false to get all matching docs including older versions/duplicates.',
           },
         },
         required: ['projectName'],
@@ -749,7 +753,7 @@ async function executeTool(name, args, ctx) {
         const docs = await callProxy(`/docs?name=${encodeURIComponent(args.projectName)}`);
         if (!docs || !docs.data) return docs;
         const filterLower = (args.documentName || '').toLowerCase();
-        const matches = docs.data
+        let matches = docs.data
           .filter(d => {
             if (!filterLower) return true;
             const n = String(d.name || '').toLowerCase();
@@ -767,6 +771,29 @@ async function executeTool(name, args, ctx) {
             hasProof: d.hasProof,
             proofStatus: d.proofStatus,
           }));
+        // Default: when filtering by a specific doc type (proof, brief, SKU,
+        // etc.), return only the MOST RECENT document per project — users
+        // almost always want the latest version, and Workfront shows the
+        // version history on the document details page anyway. Pass
+        // latestOnly=false to get every version.
+        const latestOnly = args.latestOnly !== false && !!filterLower;
+        if (latestOnly) {
+          const parseDate = (s) => {
+            if (!s) return 0;
+            const fixed = String(s).replace(/(\d{2}):(\d{3})/, '$1.$2');
+            const t = new Date(fixed).getTime();
+            return isNaN(t) ? 0 : t;
+          };
+          const byProject = new Map();
+          for (const m of matches) {
+            const key = m.projectID || m.projectName;
+            const existing = byProject.get(key);
+            if (!existing || parseDate(m.uploadedAt) > parseDate(existing.uploadedAt)) {
+              byProject.set(key, m);
+            }
+          }
+          matches = [...byProject.values()];
+        }
         if (ctx && ctx.pendingCards) {
           const card = buildDocumentsCard({
             projectSearched: args.projectName,
