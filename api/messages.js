@@ -247,6 +247,18 @@ REVIEW MEETING PREP:
 - If there are more than 6 projects, use short paragraphs. Don't skip any.
 - If a project has no recent comments, say so (not worth padding with fake detail).
 
+PROOF-RELATED QUERIES — pick the RIGHT tool:
+There are two different questions a user can ask about proofs. Don't conflate them:
+
+A) **"Send me the proof links"** / "give me the proofs for [project/review]" / "link me the proofs" → user wants the clickable Workfront document URLs for proofs that EXIST.
+   Path: call \`getReviewsInWindow\` with person + reviewType + window to get the matching projects (use \`window: 'yesterday'\` for "yesterday", \`window: 'today'\` for "today", etc.), THEN for each project call \`findProjectDocuments\` with \`projectName: <project name>\` and \`documentName: "proof"\`. Return the document links.
+   NEVER call \`checkProofsForReview\` for this — it's the wrong tool (it answers a different question).
+
+B) **"Which projects still need proofs"** / "who hasn't posted a proof" / "what's missing a proof" → call \`checkProofsForReview\` (proof-readiness analysis).
+
+WINDOWS — available values:
+\`today\`, \`yesterday\`, \`tomorrow\`, \`thisweek\`, \`nextweek\`, \`last7\`, \`next7\`, \`thismonth\`. For specific dates pass \`startDate\` + \`endDate\` (YYYY-MM-DD).
+
 CHECKING PROOF READINESS:
 When the user asks "which projects still need a proof?", "who hasn't posted a proof for CR?", "what's missing proofs for marketing review next week?", etc. — ALWAYS call \`checkProofsForReview\` with the relevant reviewType + window. The tool attaches an Adaptive Card automatically when \`_cardAttached: true\` — when that's true, keep your text reply to ONE short sentence (e.g. "Here's the rundown —" or "X projects still need a proof:") and let the card carry the list. Do NOT re-list the projects in markdown.
 
@@ -392,7 +404,7 @@ const tools = [
         type: 'object',
         properties: {
           person: { type: 'string', description: 'Optional person name (partial match, case-insensitive). Omit for team-wide leaderboard.' },
-          window: { type: 'string', enum: ['thisweek', 'nextweek', 'last7', 'next7', 'thismonth'] },
+          window: { type: 'string', enum: ['today', 'yesterday', 'tomorrow', 'thisweek', 'nextweek', 'last7', 'next7', 'thismonth'] },
         },
       },
     },
@@ -406,7 +418,7 @@ const tools = [
         type: 'object',
         properties: {
           reviewType: { type: 'string', enum: ['creative', 'marketing', 'exec'] },
-          window: { type: 'string', enum: ['thisweek', 'nextweek', 'last7', 'next7', 'thismonth'] },
+          window: { type: 'string', enum: ['today', 'yesterday', 'tomorrow', 'thisweek', 'nextweek', 'last7', 'next7', 'thismonth'] },
         },
         required: ['reviewType'],
       },
@@ -427,7 +439,7 @@ const tools = [
           },
           window: {
             type: 'string',
-            enum: ['thisweek', 'nextweek', 'last7', 'next7', 'thismonth'],
+            enum: ['today', 'yesterday', 'tomorrow', 'thisweek', 'nextweek', 'last7', 'next7', 'thismonth'],
             description: 'Named window for which projects to check.',
           },
           startDate: { type: 'string' },
@@ -517,7 +529,7 @@ const tools = [
           },
           window: {
             type: 'string',
-            enum: ['thisweek', 'nextweek', 'last7', 'next7', 'thismonth'],
+            enum: ['today', 'yesterday', 'tomorrow', 'thisweek', 'nextweek', 'last7', 'next7', 'thismonth'],
             description: 'Named window. Use thisweek/nextweek/thismonth for the common cases. Provide EITHER window OR startDate+endDate.',
           },
           startDate: { type: 'string', description: 'ISO date YYYY-MM-DD (inclusive). Use with endDate for custom ranges.' },

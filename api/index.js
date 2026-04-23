@@ -121,6 +121,21 @@ function resolveWindow(window, startDate, endDate) {
     const ne = new Date(saturday); ne.setDate(saturday.getDate() + 7);
     return [ns, ne];
   }
+  if (window === 'today') {
+    const s = new Date(now); s.setHours(0,0,0,0);
+    const e = new Date(now); e.setHours(23,59,59,999);
+    return [s, e];
+  }
+  if (window === 'yesterday') {
+    const s = new Date(now); s.setDate(now.getDate() - 1); s.setHours(0,0,0,0);
+    const e = new Date(now); e.setDate(now.getDate() - 1); e.setHours(23,59,59,999);
+    return [s, e];
+  }
+  if (window === 'tomorrow') {
+    const s = new Date(now); s.setDate(now.getDate() + 1); s.setHours(0,0,0,0);
+    const e = new Date(now); e.setDate(now.getDate() + 1); e.setHours(23,59,59,999);
+    return [s, e];
+  }
   if (window === 'last7' || window === 'next7') {
     const s = new Date(now); const e = new Date(now);
     if (window === 'last7') s.setDate(now.getDate() - 7); else e.setDate(now.getDate() + 7);
