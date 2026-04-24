@@ -1397,6 +1397,56 @@ module.exports = async (req, res) => {
       });
     }
 
+    // GET /debug-schedules — diagnostic dump of stored schedules + their
+    // conversation refs (what type of chat each is scheduled to fire in).
+    else if (path === '/debug-schedules' || path === '/debug-schedules/') {
+      try {
+        const { Redis } = require('@upstash/redis');
+        const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+        const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+        const r = new Redis({ url, token });
+        const convKeys = await r.smembers('convrefs:all') || [];
+        // Get all schedules by scanning known keys - we don't have an index
+        // so iterate due-set
+        const dueIds = await r.zrange('schedules:due', 0, Date.now() + 365 * 86400 * 1000, { byScore: true });
+        const scheds = [];
+        for (const id of dueIds || []) {
+          const raw = await r.get(`schedule:${id}`);
+          const s = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : null;
+          if (!s) continue;
+          const refRaw = s.conversationId ? await r.get(`convref:${s.conversationId}`) : null;
+          const ref = refRaw ? (typeof refRaw === 'string' ? JSON.parse(refRaw) : refRaw) : null;
+          scheds.push({
+            id: s.id,
+            active: s.active,
+            type: s.type,
+            description: s.description,
+            messageKind: s.messageKind,
+            conversationId: s.conversationId,
+            createdBy: s.createdBy,
+            convRef: ref ? {
+              conversationType: ref.conversation && ref.conversation.conversationType,
+              conversationId: ref.conversation && ref.conversation.id,
+              tenantId: ref.conversation && ref.conversation.tenantId,
+              isGroup: ref.conversation && ref.conversation.isGroup,
+              botId: ref.bot && ref.bot.id,
+              userId: ref.user && ref.user.id,
+              userName: ref.user && ref.user.name,
+              serviceUrl: ref.serviceUrl,
+            } : null,
+          });
+        }
+        return res.status(200).json({
+          totalConvRefs: convKeys.length,
+          allConvRefIds: convKeys.slice(0, 50),
+          totalSchedules: scheds.length,
+          schedules: scheds,
+        });
+      } catch (err) {
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
     // GET /cron — fires due scheduled messages AND polls Workfront for project
     // changes, DMing subscribed users about any updates. Called every 5 min by
     // cron-job.org. Merged into index.js because Vercel wasn't picking up

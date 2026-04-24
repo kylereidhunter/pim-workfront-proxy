@@ -18,6 +18,7 @@
     { "source": "/meeting-prep", "destination": "/api/index" },
     { "source": "/upload-proof", "destination": "/api/index" },
     { "source": "/weekly-digest", "destination": "/api/index" },
-    { "source": "/cron", "destination": "/api/index" }
+    { "source": "/cron", "destination": "/api/index" },
+    { "source": "/debug-schedules", "destination": "/api/index" }
   ]
 }
