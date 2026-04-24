@@ -335,11 +335,19 @@ async function detectAndNotify() {
       arr.push(n);
       notesByProject.set(n.projectID, arr);
     }
+    // Batch-fetch all previous note snapshots in one Redis call.
+    const projIds = [...notesByProject.keys()];
+    const noteSnapKeys = projIds.map(id => `snap:notes:${id}`);
+    const noteSnapRaws = noteSnapKeys.length ? await r.mget(...noteSnapKeys) : [];
+    const prevLastByProject = new Map();
+    projIds.forEach((id, i) => {
+      const raw = noteSnapRaws[i];
+      prevLastByProject.set(id, raw ? new Date(raw).getTime() : null);
+    });
     for (const [projID, projNotes] of notesByProject) {
       const proj = projectById.get(projID);
       if (!proj) continue;
-      const prevLastRaw = await r.get(`snap:notes:${projID}`);
-      const prevLast = prevLastRaw ? new Date(prevLastRaw).getTime() : null;
+      const prevLast = prevLastByProject.get(projID);
       // Find max entryDate in this batch
       const sorted = projNotes
         .map(n => ({ n, ts: n.entryDate ? new Date(String(n.entryDate).replace(/(\d{2}):(\d{3})/, '$1.$2')).getTime() : 0 }))

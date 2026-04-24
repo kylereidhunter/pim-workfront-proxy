@@ -61,7 +61,9 @@ async function listEnabled() {
   const r = kv();
   const names = await r.smembers('subs:enabled');
   if (!names || names.length === 0) return [];
-  const records = await Promise.all(names.map(n => r.get(`sub:user:${n}`)));
+  // mget in a single Redis round-trip instead of N individual gets.
+  const keys = names.map(n => `sub:user:${n}`);
+  const records = await r.mget(...keys);
   return records
     .map(raw => (typeof raw === 'string' ? JSON.parse(raw) : raw))
     .filter(Boolean);
