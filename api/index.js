@@ -67,7 +67,18 @@ async function fuzzyFindProjects(userQuery, workfrontFetcher) {
   const raw = String(userQuery || '').trim();
   if (!raw) return { data: [], queryWords: [] };
   const normalize = (s) => String(s || '').toLowerCase().replace(/[_\-\s]+/g, ' ').trim();
-  const queryWords = normalize(raw).split(' ').filter(Boolean);
+  // Stopwords that should NOT be required to match — users often say
+  // "cushions and pillows" when the project is "Cushions_Pillows", or
+  // "the chat set email" when it's just "Chat Sets Email".
+  const STOPWORDS = new Set([
+    'and', 'or', '&', 'the', 'a', 'an', 'of', 'for', 'in', 'on', 'at',
+    'to', 'with', 'my', 'your', 'our', 'their', 'this', 'that', 'is',
+    'are', 'be', 'on', 'into',
+  ]);
+  const queryWords = normalize(raw)
+    .split(' ')
+    .filter(Boolean)
+    .filter(w => !STOPWORDS.has(w));
   const rawWords = raw.replace(/[_\-]+/g, ' ').split(/\s+/).filter(Boolean);
   const longestRaw = rawWords.sort((a, b) => b.length - a.length)[0] || raw;
   const candidates = [longestRaw];
@@ -277,7 +288,15 @@ module.exports = async (req, res) => {
     else if (path === '/docs' || path === '/docs/') {
       const userQuery = String(query.name || 'FY27').trim();
       const normalize = (s) => String(s || '').toLowerCase().replace(/[_\-\s]+/g, ' ').trim();
-      const queryWords = normalize(userQuery).split(' ').filter(Boolean);
+      const STOPWORDS = new Set([
+        'and', 'or', '&', 'the', 'a', 'an', 'of', 'for', 'in', 'on',
+        'at', 'to', 'with', 'my', 'your', 'our', 'their', 'this',
+        'that', 'is', 'are', 'be', 'into',
+      ]);
+      const queryWords = normalize(userQuery)
+        .split(' ')
+        .filter(Boolean)
+        .filter(w => !STOPWORDS.has(w));
       const rawWords = userQuery.replace(/[_\-]+/g, ' ').split(/\s+/).filter(Boolean);
       const longestRaw = rawWords.sort((a, b) => b.length - a.length)[0] || userQuery;
       // Workfront's name_Mod=contains is case-sensitive. Project names use a
