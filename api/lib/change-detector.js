@@ -273,16 +273,9 @@ async function detectAndNotify() {
         proofDecision: d.proofDecision || null,
       };
       if (!prev) {
-        // First time seeing this doc — fire upload event (but only if not first run overall)
-        if (!firstDocRun) {
-          const affected = currentAssigneeNames(proj);
-          const ev = { type: 'doc-uploaded', docName: d.name, fileName: d.fileName };
-          events.push({
-            projectID: proj.ID,
-            affected,
-            formatFor: () => buildDocPayload(ev, proj),
-          });
-        }
+        // First time seeing this doc — snapshot silently. Doc-upload
+        // notifications are pull-only: users ask Pim "any new docs on X"
+        // via findProjectDocuments instead of getting DM'd for every upload.
         await r.set(`snap:doc:${d.docID}`, JSON.stringify(curr));
         continue;
       }
